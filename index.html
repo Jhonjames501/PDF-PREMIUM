@@ -653,12 +653,32 @@
       padding: 5px;
       display: none;
       flex-direction: column;
-      min-width: 165px;
+      min-width: 182px;
       z-index: 35;
     }
 
     .lib-item-menu.open {
       display: flex;
+    }
+
+    .lib-menu-action-btn {
+      border: none;
+      background: transparent;
+      color: #0B2559;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 9px 11px;
+      border-radius: 9px;
+      text-align: left;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+    }
+
+    .lib-menu-action-btn:active {
+      background: #EDF2FA;
     }
 
     .lib-menu-delete-btn {
@@ -1351,6 +1371,9 @@
       transition: opacity 0.25s, transform 0.25s;
       z-index: 60;
       white-space: nowrap;
+      max-width: 92vw;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .toast-msg.show {
@@ -1433,6 +1456,13 @@
       <!-- Vista Ajustes -->
       <div class="settings-panel" id="home-settings-view">
         <h2 class="section-heading">Ajustes del Lector</h2>
+        <div class="settings-card">
+          <div class="settings-card-text">
+            <h4>Compartir LECTOR PDF</h4>
+            <p>Envía el enlace de la aplicación por WhatsApp, Telegram, correo y más.</p>
+          </div>
+          <button type="button" class="btn-sapphire-sm" id="share-app-btn">Compartir App</button>
+        </div>
         <div class="settings-card">
           <div class="settings-card-text">
             <h4>Modo Noche predeterminado</h4>
@@ -1872,7 +1902,6 @@
     function isLegacySampleDoc(doc) {
       if (!doc || isProtectedBaseDoc(doc)) return false;
       const normName = String(doc.name || '').trim().toLowerCase();
-      // Eliminar específicamente cualquier registro llamado mi_primer_negocio_digital... y ejemplos antiguos
       if (normName.startsWith('mi_primer_negocio_digital')) return true;
       if (doc.isUploaded) return false;
       const legacyIds = new Set(['doc-informe-2024', 'doc-facture-enero', 'doc-proyecto-guia']);
@@ -1916,7 +1945,6 @@
     async function normalizeLibraryAndCleanup(docsList, protectIdsSet = new Set()) {
       const rawArray = Array.isArray(docsList) ? docsList : [];
 
-      // Enriquecer PDFs reales con contentHash desde IndexedDB si existe
       for (const doc of rawArray) {
         if (doc && doc.isUploaded && !doc.contentHash) {
           const rec = await getPdfRecordFromIndexedDB(doc.id);
@@ -1926,8 +1954,6 @@
         }
       }
 
-      // Eliminar los dos registros duplicados de ejemplo llamados mi_primer_negocio_digital... y ejemplos antiguos
-      // Conservando siempre todos los PDFs reales (isUploaded) y Manual_Usuario.pdf / Guía_Usuario.pdf
       const filteredDocs = rawArray.filter(doc => {
         if (!doc || !doc.name) return false;
         if (isProtectedBaseDoc(doc)) return true;
@@ -1956,7 +1982,6 @@
         }
       }
 
-      // Garantizar que Manual_Usuario.pdf y Guía_Usuario.pdf estén presentes
       for (const baseDoc of DEFAULT_DOCS) {
         const exists = cleanedList.some(
           d => d.id === baseDoc.id || String(d.name || '').trim().toLowerCase() === baseDoc.name.toLowerCase()
@@ -1966,7 +1991,6 @@
         }
       }
 
-      // Limpiar registros duplicados en IndexedDB sin borrar archivos PDF reales únicos
       const allDbRecords = await getAllPdfRecordsFromIndexedDB();
       const canonicalIds = new Set(cleanedList.map(d => d.id));
       const canonicalHashes = new Set(cleanedList.map(d => d.contentHash).filter(Boolean));
@@ -2114,7 +2138,261 @@
       toast.textContent = msg;
       toast.classList.add('show');
       clearTimeout(toastTimer);
-      toastTimer = setTimeout(() => toast.classList.remove('show'), 2400);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 2600);
+    }
+
+    // ================= 1. COMPARTIR APLICACIÓN (GITHUB PAGES) =================
+    function getAppShareUrl() {
+      const loc = window.location;
+      if (loc && (loc.protocol === 'https:' || loc.protocol === 'http:')) {
+        return `${loc.origin}${loc.pathname}`;
+      }
+      return 'https://github.com/';
+    }
+
+    async function shareApplicationLink() {
+      const appUrl = getAppShareUrl();
+      const shareData = {
+        title: 'LECTOR PDF',
+        text: 'Abre y lee tus documentos PDF con LECTOR PDF:',
+        url: appUrl
+      };
+
+      if (navigator.share) {
+        try {
+          await navigator.share(shareData);
+          return;
+        } catch (err) {
+          if (err && err.name === 'AbortError') return;
+        }
+      }
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        try {
+          await navigator.clipboard.writeText(appUrl);
+          showToast('Enlace de LECTOR PDF copiado al portapapeles');
+          return;
+        } catch (e) {}
+      }
+
+      showToast(`Enlace: ${appUrl}`);
+    }
+
+    // ================= 2. COMPARTIR PDF ORIGINAL COMO ARCHIVO ADJUNTO =================
+    function sanitizePdfFileName(rawName) {
+      const base = String(rawName || 'Documento.pdf').trim() || 'Documento.pdf';
+      return base.toLowerCase().endsWith('.pdf') ? base : `${base}.pdf`;
+    }
+
+    function escapePdfLiteralText(str) {
+      return String(str || '')
+        .replace(/[^\x20-\x7EÁÉÍÓÚáéíóúÑñüÜ•–—:().,;/ -]/g, ' ')
+        .replace(/\\/g, '\\\\')
+        .replace(/\(/g, '\\(')
+        .replace(/\)/g, '\\)');
+    }
+
+    function wrapPdfLines(text, maxChars = 76) {
+      const words = String(text || '').split(/\s+/).filter(Boolean);
+      const lines = [];
+      let current = '';
+      for (const word of words) {
+        if (!current) {
+          current = word;
+        } else if ((current + ' ' + word).length <= maxChars) {
+          current += ' ' + word;
+        } else {
+          lines.push(current);
+          current = word;
+        }
+      }
+      if (current) lines.push(current);
+      return lines;
+    }
+
+    // Construye un archivo PDF válido con el contenido de todas las páginas para documentos base
+    function buildValidPdfBytesFromDoc(doc) {
+      const totalPages = Math.max(1, Number(doc.totalPages) || 1);
+      const docTitle = doc.name.replace(/\.pdf$/i, '');
+      const highlights = Array.isArray(doc.highlights) && doc.highlights.length > 0
+        ? doc.highlights
+        : [
+            'Documento PDF generado y conservado en su formato original.',
+            'Compatible con Google PDF Viewer, Adobe Acrobat, Drive, WPS Office y cualquier lector PDF.'
+          ];
+
+      const pageStreams = [];
+      for (let p = 1; p <= totalPages; p++) {
+        const rawLines = [
+          `${docTitle} - Pagina ${p} de ${totalPages}`,
+          `Tema: ${doc.topic || 'Documento PDF'}`,
+          `Resumen de la seccion ${p}:`,
+          highlights[(p - 1) % highlights.length],
+          ...highlights.map((h, idx) => `Punto ${idx + 1}: ${h}`)
+        ];
+
+        const wrappedLines = [];
+        for (const rl of rawLines) {
+          for (const wl of wrapPdfLines(rl, 74)) {
+            wrappedLines.push(wl);
+          }
+        }
+
+        let ops = 'BT\n/F1 12 Tf\n50 760 Td\n16 TL\n';
+        wrappedLines.slice(0, 40).forEach((line, index) => {
+          const escaped = escapePdfLiteralText(line);
+          if (index === 0) {
+            ops += `(${escaped}) Tj\n`;
+          } else {
+            ops += `T* (${escaped}) Tj\n`;
+          }
+        });
+        ops += 'ET\n';
+        pageStreams.push(ops);
+      }
+
+      const objects = [];
+      // 1: Catalog
+      objects.push('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
+
+      // 2: Pages (se rellena con referencias de páginas)
+      const firstPageObjNum = 4;
+      const pageObjNums = [];
+      const contentObjNums = [];
+      for (let i = 0; i < totalPages; i++) {
+        const pObj = firstPageObjNum + i * 2;
+        const cObj = pObj + 1;
+        pageObjNums.push(`${pObj} 0 R`);
+        contentObjNums.push(cObj);
+      }
+
+      // 3: Font
+      const fontObjNum = firstPageObjNum + totalPages * 2;
+
+      objects.splice(1, 0,
+        `2 0 obj\n<< /Type /Pages /Kids [${pageObjNums.join(' ')}] /Count ${totalPages} >>\nendobj\n`
+      );
+
+      for (let i = 0; i < totalPages; i++) {
+        const pObj = firstPageObjNum + i * 2;
+        const cObj = contentObjNums[i];
+        const streamStr = pageStreams[i];
+        const byteLen = new TextEncoder().encode(streamStr).length;
+
+        objects.push(
+          `${pObj} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 ${fontObjNum} 0 R >> >> /Contents ${cObj} 0 R >>\nendobj\n`
+        );
+        objects.push(
+          `${cObj} 0 obj\n<< /Length ${byteLen} >>\nstream\n${streamStr}endstream\nendobj\n`
+        );
+      }
+
+      objects.push(
+        `${fontObjNum} 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n`
+      );
+
+      let pdfContent = '%PDF-1.4\n';
+      const offsets = [0];
+
+      for (const objStr of objects) {
+        offsets.push(new TextEncoder().encode(pdfContent).length);
+        pdfContent += objStr;
+      }
+
+      const xrefOffset = new TextEncoder().encode(pdfContent).length;
+      const totalObjs = objects.length + 1;
+      pdfContent += `xref\n0 ${totalObjs}\n`;
+      pdfContent += '0000000000 65535 f \n';
+      for (let i = 1; i < offsets.length; i++) {
+        pdfContent += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+      }
+      pdfContent += `trailer\n<< /Size ${totalObjs} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+
+      return new TextEncoder().encode(pdfContent);
+    }
+
+    async function getOriginalPdfFile(doc) {
+      if (!doc) return null;
+      const fileName = sanitizePdfFileName(doc.name);
+
+      if (doc.isUploaded) {
+        let buffer = sessionRawBuffers.get(doc.id) || null;
+        if (!buffer) {
+          const record = await getPdfRecordFromIndexedDB(doc.id);
+          if (record && record.buffer) {
+            buffer = record.buffer;
+            sessionRawBuffers.set(doc.id, buffer);
+          }
+        }
+        if (buffer) {
+          const pdfBlob = new Blob([buffer.slice(0)], { type: 'application/pdf' });
+          return new File([pdfBlob], fileName, {
+            type: 'application/pdf',
+            lastModified: doc.lastOpenedAt || Date.now()
+          });
+        }
+      }
+
+      const generatedBytes = buildValidPdfBytesFromDoc(doc);
+      const generatedBlob = new Blob([generatedBytes], { type: 'application/pdf' });
+      return new File([generatedBlob], fileName, {
+        type: 'application/pdf',
+        lastModified: Date.now()
+      });
+    }
+
+    function triggerPdfDownloadFallback(pdfFile) {
+      const blobUrl = URL.createObjectURL(pdfFile);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = pdfFile.name;
+      link.rel = 'noopener';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 15000);
+      showToast(`"${pdfFile.name}" descargado. Compártelo desde Descargas o tus apps.`);
+    }
+
+    async function sharePdfDocumentAsFile(doc) {
+      if (!doc) return;
+      showToast(`Preparando archivo ${sanitizePdfFileName(doc.name)}...`);
+
+      try {
+        const pdfFile = await getOriginalPdfFile(doc);
+        if (!pdfFile) {
+          showToast('No se pudo preparar el archivo PDF');
+          return;
+        }
+
+        const sharePayload = {
+          files: [pdfFile],
+          title: pdfFile.name
+        };
+
+        const canShareFiles =
+          typeof navigator.share === 'function' &&
+          typeof navigator.canShare === 'function' &&
+          navigator.canShare({ files: [pdfFile] });
+
+        if (canShareFiles) {
+          try {
+            await navigator.share(sharePayload);
+            return;
+          } catch (shareErr) {
+            if (shareErr && shareErr.name === 'AbortError') {
+              return;
+            }
+            triggerPdfDownloadFallback(pdfFile);
+            return;
+          }
+        }
+
+        triggerPdfDownloadFallback(pdfFile);
+      } catch (err) {
+        console.error('Error al compartir PDF:', err);
+        showToast('No se pudo compartir el archivo PDF');
+      }
     }
 
     // ================= PANTALLA 1: CARGA 0% -> 100% =================
@@ -2218,15 +2496,13 @@
           <div class="lib-info">
             <div class="lib-top-row">
               <div class="lib-name" title="${escapeHtml(doc.name)}">${escapeHtml(doc.name)}</div>
-              ${canDelete ? `
-                <button type="button" class="lib-more-btn" data-doc-menu-btn="${escapeHtml(doc.id)}" title="Opciones del PDF" aria-label="Opciones del PDF">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                    <circle cx="12" cy="5" r="2"></circle>
-                    <circle cx="12" cy="12" r="2"></circle>
-                    <circle cx="12" cy="19" r="2"></circle>
-                  </svg>
-                </button>
-              ` : ''}
+              <button type="button" class="lib-more-btn" data-doc-menu-btn="${escapeHtml(doc.id)}" title="Opciones del PDF" aria-label="Opciones del PDF">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="12" cy="5" r="2"></circle>
+                  <circle cx="12" cy="12" r="2"></circle>
+                  <circle cx="12" cy="19" r="2"></circle>
+                </svg>
+              </button>
             </div>
             <div class="lib-meta">${escapeHtml(doc.size)} • ${doc.totalPages} páginas</div>
             <div class="lib-progress-row">
@@ -2236,14 +2512,18 @@
               <span class="lib-percent">${doc.progress}%</span>
             </div>
           </div>
-          ${canDelete ? `
-            <div class="lib-item-menu ${menuOpenClass}" data-doc-menu="${escapeHtml(doc.id)}">
+          <div class="lib-item-menu ${menuOpenClass}" data-doc-menu="${escapeHtml(doc.id)}">
+            <button type="button" class="lib-menu-action-btn" data-share-doc-id="${escapeHtml(doc.id)}">
+              <span>📤</span>
+              <span>Compartir PDF</span>
+            </button>
+            ${canDelete ? `
               <button type="button" class="lib-menu-delete-btn" data-delete-doc-id="${escapeHtml(doc.id)}">
                 <span>🗑️</span>
                 <span>Eliminar PDF</span>
               </button>
-            </div>
-          ` : ''}
+            ` : ''}
+          </div>
         `;
 
         item.addEventListener('click', () => {
@@ -2261,6 +2541,16 @@
             e.stopPropagation();
             openLibraryMenuDocId = openLibraryMenuDocId === doc.id ? null : doc.id;
             renderHomeLists();
+          });
+        }
+
+        const shareBtn = item.querySelector(`[data-share-doc-id="${doc.id}"]`);
+        if (shareBtn) {
+          shareBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            openLibraryMenuDocId = null;
+            renderHomeLists();
+            await sharePdfDocumentAsFile(doc);
           });
         }
 
@@ -2326,7 +2616,6 @@
       uploadedPdfInstances.delete(docId);
       sessionRawBuffers.delete(docId);
 
-      // Limpiar textos en caché asociados a ese documento
       Array.from(uploadedPdfTexts.keys()).forEach(k => {
         if (k.startsWith(`${docId}_`)) {
           uploadedPdfTexts.delete(k);
@@ -2551,7 +2840,6 @@
         paperBody.style.fontSize = `${(16 * clampedZoom) / 100}px`;
       }
 
-      // Escalar suavemente el canvas existente durante el gesto táctil para evitar deformaciones o cortes
       const activeCanvas = paperBody.querySelector('.pdf-canvas-wrap canvas');
       if (activeCanvas) {
         const availableCanvasW = Math.max(200, parseInt(paperSheet.style.width, 10) - 44);
@@ -2904,6 +3192,9 @@
         });
       });
 
+      // Compartir aplicación desde Ajustes
+      document.getElementById('share-app-btn').addEventListener('click', shareApplicationLink);
+
       // Ajustes
       const defaultNightBtn = document.getElementById('toggle-default-night');
       defaultNightBtn.textContent = appState.defaultNightMode ? 'Activado' : 'Desactivado';
@@ -3001,7 +3292,6 @@
 
         if (!currentDoc || pinchMoved || e.changedTouches.length !== 1) return;
 
-        // Solo cambiar de página con swipe cuando el zoom está en 100% o ajustado para evitar cortes al desplazarse con zoom
         const isZoomedIn = zoomMode === 'manual' && currentZoom > 105;
         if (isZoomedIn) return;
 
@@ -3016,7 +3306,6 @@
         }
       }, { passive: true });
 
-      // Recalcular ajuste al rotar o redimensionar ventana
       window.addEventListener('resize', () => {
         if (document.getElementById('screen-reader').classList.contains('active') && currentDoc) {
           renderCurrentPage();
@@ -3048,24 +3337,10 @@
       document.getElementById('reader-bookmark-top').addEventListener('click', saveBookmarkAction);
       document.getElementById('bookmark-chip-btn').addEventListener('click', saveBookmarkAction);
 
-      // Compartir
+      // Compartir archivo PDF desde el lector
       async function shareCurrentDoc() {
         if (!currentDoc) return;
-        const shareData = {
-          title: currentDoc.name,
-          text: `Leyendo "${currentDoc.name}" (Página ${currentPage} de ${currentDoc.totalPages}) en LECTOR PDF.`,
-          url: window.location.href
-        };
-        if (navigator.share) {
-          try {
-            await navigator.share(shareData);
-          } catch (e) {}
-        } else if (navigator.clipboard) {
-          await navigator.clipboard.writeText(`${shareData.text} ${shareData.url}`);
-          showToast('Enlace y detalles copiados al portapapeles');
-        } else {
-          showToast(`Compartiendo: ${currentDoc.name}`);
-        }
+        await sharePdfDocumentAsFile(currentDoc);
       }
       document.getElementById('share-chip-btn').addEventListener('click', shareCurrentDoc);
 
