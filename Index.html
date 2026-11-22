@@ -1,0 +1,2294 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0A2E73" />
+  <title>LECTOR PDF</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- PDF.js desde CDN confiable para renderizar PDFs reales agregados con el botón + -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <style>
+    :root {
+      --sapphire-dark: #071D49;
+      --sapphire-main: #0D3B8E;
+      --sapphire-bright: #1656C9;
+      --sapphire-glow: #2979FF;
+      --neon-cyan: #00F0FF;
+      --neon-blue: #00A3FF;
+      --silver-light: #F4F7FB;
+      --silver-mid: #C8D2E0;
+      --silver-dark: #8C9AB0;
+      --bg-app: #F2F3F5;
+      --card-light: #FFFFFF;
+      --text-dark: #0B1E40;
+      --text-muted: #5C6B82;
+      --silver-border: linear-gradient(135deg, #FFFFFF 0%, #B8C4D4 45%, #E8EEF5 70%, #8E9CB2 100%);
+      --sapphire-grad: linear-gradient(145deg, #1656C9 0%, #0D3B8E 52%, #071D49 100%);
+      --radius-xl: 20px;
+      --radius-lg: 16px;
+      --radius-md: 12px;
+      --shadow-card: 0 8px 20px rgba(10, 38, 94, 0.14);
+      --shadow-soft: 0 4px 12px rgba(11, 30, 64, 0.07);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: var(--bg-app);
+      color: var(--text-dark);
+      overflow: hidden;
+    }
+
+    /* ================= UTILIDADES DE PANTALLA ================= */
+    .screen {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.45s ease, transform 0.45s ease;
+      z-index: 1;
+    }
+
+    .screen.active {
+      opacity: 1;
+      pointer-events: auto;
+      z-index: 10;
+    }
+
+    /* ================= PANTALLA 1: CARGA / SPLASH ================= */
+    #screen-splash {
+      background: #02060D;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      padding: 24px;
+    }
+
+    .neon-waves {
+      position: absolute;
+      inset: -30%;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    .wave-ring {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      border-radius: 46% 54% 48% 52% / 52% 45% 55% 48%;
+      transform: translate(-50%, -50%);
+      border: 2px solid rgba(0, 240, 255, 0.38);
+      box-shadow:
+        0 0 32px rgba(0, 240, 255, 0.35),
+        inset 0 0 28px rgba(0, 163, 255, 0.25);
+      animation: swirlWave 9s linear infinite;
+    }
+
+    .wave-ring:nth-child(1) {
+      width: 340px;
+      height: 340px;
+      animation-duration: 8s;
+    }
+
+    .wave-ring:nth-child(2) {
+      width: 470px;
+      height: 430px;
+      border-color: rgba(0, 163, 255, 0.32);
+      animation-duration: 12s;
+      animation-direction: reverse;
+    }
+
+    .wave-ring:nth-child(3) {
+      width: 620px;
+      height: 580px;
+      border-color: rgba(0, 240, 255, 0.2);
+      animation-duration: 16s;
+    }
+
+    .wave-glow {
+      position: absolute;
+      width: 320px;
+      height: 320px;
+      top: 42%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: radial-gradient(circle, rgba(0, 240, 255, 0.25) 0%, rgba(0, 102, 255, 0.1) 45%, transparent 72%);
+      filter: blur(18px);
+      animation: pulseGlow 3s ease-in-out infinite alternate;
+    }
+
+    @keyframes swirlWave {
+      0% { transform: translate(-50%, -50%) rotate(0deg) scale(1); }
+      50% { transform: translate(-50%, -50%) rotate(180deg) scale(1.06); }
+      100% { transform: translate(-50%, -50%) rotate(360deg) scale(1); }
+    }
+
+    @keyframes pulseGlow {
+      from { opacity: 0.65; transform: translate(-50%, -50%) scale(0.95); }
+      to { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+    }
+
+    .splash-content {
+      position: relative;
+      z-index: 3;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      width: 100%;
+      max-width: 340px;
+    }
+
+    /* Icono PDF 3D de cristal transparente con brillo azul neón */
+    .glass-pdf-3d {
+      position: relative;
+      width: 124px;
+      height: 152px;
+      margin-bottom: 28px;
+      border-radius: 22px 38px 22px 22px;
+      background: linear-gradient(145deg, rgba(255, 255, 255, 0.18) 0%, rgba(0, 240, 255, 0.08) 45%, rgba(0, 110, 255, 0.16) 100%);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 2px solid rgba(130, 248, 255, 0.78);
+      box-shadow:
+        0 0 28px rgba(0, 240, 255, 0.55),
+        0 18px 34px rgba(0, 0, 0, 0.75),
+        inset 0 2px 12px rgba(255, 255, 255, 0.45),
+        inset -6px -8px 18px rgba(0, 195, 255, 0.35);
+      transform: perspective(600px) rotateY(-12deg) rotateX(6deg);
+      animation: floatCrystal 3s ease-in-out infinite alternate;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .glass-pdf-3d::before {
+      content: "";
+      position: absolute;
+      top: -1px;
+      right: -1px;
+      width: 34px;
+      height: 34px;
+      background: linear-gradient(225deg, rgba(255, 255, 255, 0.55) 0%, rgba(0, 240, 255, 0.25) 100%);
+      border-bottom-left-radius: 14px;
+      border-left: 1.5px solid rgba(180, 252, 255, 0.8);
+      border-bottom: 1.5px solid rgba(180, 252, 255, 0.8);
+      box-shadow: -4px 4px 10px rgba(0, 240, 255, 0.3);
+    }
+
+    .glass-pdf-badge {
+      padding: 8px 16px;
+      border-radius: 12px;
+      background: linear-gradient(145deg, rgba(0, 240, 255, 0.22), rgba(0, 95, 210, 0.35));
+      border: 1.5px solid rgba(170, 252, 255, 0.85);
+      box-shadow: 0 0 18px rgba(0, 240, 255, 0.6), inset 0 1px 4px rgba(255, 255, 255, 0.5);
+      color: #E8FFFF;
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: 1.5px;
+      text-shadow: 0 0 12px rgba(0, 240, 255, 0.9);
+      transform: translateZ(20px);
+    }
+
+    @keyframes floatCrystal {
+      from { transform: perspective(600px) rotateY(-12deg) rotateX(6deg) translateY(0px); }
+      to { transform: perspective(600px) rotateY(-6deg) rotateX(3deg) translateY(-8px); }
+    }
+
+    .splash-title {
+      color: #FFFFFF;
+      font-size: 32px;
+      font-weight: 800;
+      letter-spacing: 1.8px;
+      margin-bottom: 8px;
+      text-shadow: 0 2px 16px rgba(0, 240, 255, 0.35);
+    }
+
+    .splash-subtitle {
+      color: #7CE8FF;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 2.8px;
+      margin-bottom: 34px;
+      text-transform: uppercase;
+    }
+
+    .glass-capsule {
+      width: 100%;
+      padding: 6px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1.5px solid rgba(155, 238, 255, 0.45);
+      box-shadow:
+        0 0 24px rgba(0, 240, 255, 0.22),
+        inset 0 2px 6px rgba(255, 255, 255, 0.16);
+      backdrop-filter: blur(8px);
+    }
+
+    .glass-capsule-track {
+      width: 100%;
+      height: 12px;
+      border-radius: 999px;
+      background: rgba(3, 14, 30, 0.85);
+      overflow: hidden;
+      position: relative;
+    }
+
+    .glass-capsule-fill {
+      width: 0%;
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #0077FF 0%, #00E5FF 65%, #B8FFFF 100%);
+      box-shadow: 0 0 14px #00F0FF;
+      transition: width 0.08s linear;
+    }
+
+    .splash-percent-text {
+      margin-top: 10px;
+      color: #D8F8FF;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+    }
+
+    /* ================= PANTALLA 2: PRINCIPAL ================= */
+    #screen-home {
+      background-color: var(--bg-app);
+    }
+
+    .top-sapphire-bar {
+      background: var(--sapphire-grad);
+      padding: 16px 18px 18px;
+      border-bottom: 2px solid #C5D1E2;
+      box-shadow: 0 4px 16px rgba(7, 29, 73, 0.26);
+      position: relative;
+      z-index: 5;
+      flex-shrink: 0;
+    }
+
+    .top-sapphire-bar::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(255,255,255,0.16) 0%, transparent 55%);
+      pointer-events: none;
+    }
+
+    .brand-row {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      max-width: 680px;
+      margin: 0 auto;
+    }
+
+    .silver-pdf-icon {
+      width: 36px;
+      height: 42px;
+      border-radius: 8px 14px 8px 8px;
+      background: linear-gradient(145deg, #FFFFFF 0%, #D3DCE8 50%, #98A6BC 100%);
+      border: 1.5px solid #FFFFFF;
+      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.35), inset 0 1px 2px #FFFFFF;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    .silver-pdf-icon span {
+      font-size: 11px;
+      font-weight: 800;
+      color: #0D3B8E;
+      letter-spacing: 0.5px;
+    }
+
+    .brand-title-silver {
+      font-size: 21px;
+      font-weight: 800;
+      letter-spacing: 0.8px;
+      background: linear-gradient(180deg, #FFFFFF 0%, #DCE4F0 55%, #A9B8CE 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35));
+    }
+
+    .home-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 16px 100px;
+      max-width: 680px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    /* Buscador blanco redondeado */
+    .search-box {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: #FFFFFF;
+      border: 1.5px solid #D3DCE8;
+      border-radius: 16px;
+      padding: 11px 14px;
+      box-shadow: var(--shadow-soft);
+      margin-bottom: 20px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .search-box:focus-within {
+      border-color: var(--sapphire-bright);
+      box-shadow: 0 4px 14px rgba(22, 86, 201, 0.16);
+    }
+
+    .search-box svg {
+      width: 20px;
+      height: 20px;
+      color: var(--sapphire-bright);
+      flex-shrink: 0;
+    }
+
+    .search-box input {
+      border: none;
+      outline: none;
+      width: 100%;
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 500;
+      color: var(--text-dark);
+      background: transparent;
+    }
+
+    .search-box input::placeholder {
+      color: #8A98AD;
+    }
+
+    .clear-search-btn {
+      border: none;
+      background: #E8ECF2;
+      color: #4A5A73;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .clear-search-btn.visible {
+      display: flex;
+    }
+
+    .section-heading {
+      font-size: 18px;
+      font-weight: 800;
+      color: #082356;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    /* 3 tarjetas de Recientes en Azul Zafiro con borde plateado */
+    .recents-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+
+    .recent-card-wrap {
+      padding: 2px;
+      border-radius: 18px;
+      background: var(--silver-border);
+      box-shadow: var(--shadow-card);
+      cursor: pointer;
+      transition: transform 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    .recent-card-wrap:active {
+      transform: scale(0.97);
+    }
+
+    .recent-card {
+      height: 100%;
+      background: var(--sapphire-grad);
+      border-radius: 16px;
+      padding: 10px 8px 11px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      color: #FFFFFF;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .recent-cover {
+      width: 64px;
+      height: 80px;
+      border-radius: 10px 18px 10px 10px;
+      background: linear-gradient(155deg, #1F67E3 0%, #0B337D 65%, #061A42 100%);
+      border: 1.5px solid #DCE5F2;
+      box-shadow: 0 5px 12px rgba(0, 0, 0, 0.35), inset 0 1px 3px rgba(255, 255, 255, 0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 6px;
+      margin-bottom: 9px;
+      position: relative;
+    }
+
+    .recent-cover::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 16px;
+      height: 16px;
+      background: linear-gradient(225deg, #FFFFFF 0%, #B9C7DA 100%);
+      border-bottom-left-radius: 7px;
+    }
+
+    .recent-cover-label {
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.4px;
+      color: #F4F8FF;
+      text-transform: uppercase;
+      line-height: 1.2;
+      word-break: break-word;
+    }
+
+    .recent-name {
+      font-size: 11.5px;
+      font-weight: 700;
+      color: #FFFFFF;
+      width: 100%;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 3px;
+    }
+
+    .recent-meta {
+      font-size: 9.5px;
+      color: #C7DAFA;
+      margin-bottom: 8px;
+      line-height: 1.25;
+    }
+
+    .recent-progress-row {
+      width: 100%;
+      margin-top: auto;
+    }
+
+    .recent-percent {
+      display: block;
+      text-align: right;
+      font-size: 10px;
+      font-weight: 800;
+      color: #E8F1FF;
+      margin-bottom: 3px;
+    }
+
+    .silver-progress-track {
+      width: 100%;
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(4, 15, 38, 0.55);
+      border: 1px solid rgba(214, 226, 245, 0.35);
+      overflow: hidden;
+    }
+
+    .silver-progress-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #B5C4D8 0%, #FFFFFF 55%, #D3DFEE 100%);
+      transition: width 0.3s ease;
+    }
+
+    /* Filas de Mi Biblioteca */
+    .library-list {
+      display: flex;
+      flex-direction: column;
+      gap: 11px;
+    }
+
+    .library-item {
+      background: #E7EAF0;
+      border: 1.5px solid #D2DAE6;
+      border-radius: 16px;
+      padding: 11px 13px;
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      box-shadow: var(--shadow-soft);
+      cursor: pointer;
+      transition: transform 0.16s ease, background-color 0.2s;
+    }
+
+    .library-item:active {
+      transform: scale(0.985);
+      background: #DFE4EC;
+    }
+
+    .lib-cover {
+      width: 52px;
+      height: 64px;
+      border-radius: 10px 16px 10px 10px;
+      background: var(--sapphire-grad);
+      border: 1.5px solid #C8D4E6;
+      box-shadow: 0 4px 10px rgba(10, 38, 94, 0.22);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 5px;
+      flex-shrink: 0;
+      position: relative;
+    }
+
+    .lib-cover::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 13px;
+      height: 13px;
+      background: linear-gradient(225deg, #FFFFFF 0%, #B4C2D6 100%);
+      border-bottom-left-radius: 6px;
+    }
+
+    .lib-cover span {
+      font-size: 8.5px;
+      font-weight: 800;
+      color: #FFFFFF;
+      text-transform: uppercase;
+      text-align: center;
+      line-height: 1.15;
+    }
+
+    .lib-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .lib-name {
+      font-size: 15px;
+      font-weight: 700;
+      color: #0B2559;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 3px;
+    }
+
+    .lib-meta {
+      font-size: 12px;
+      font-weight: 500;
+      color: #56667E;
+      margin-bottom: 8px;
+    }
+
+    .lib-progress-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .lib-progress-track {
+      flex: 1;
+      height: 7px;
+      border-radius: 999px;
+      background: #CFD6E2;
+      overflow: hidden;
+    }
+
+    .lib-progress-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #0D3B8E 0%, #2979FF 100%);
+      transition: width 0.3s ease;
+    }
+
+    .lib-percent {
+      font-size: 12.5px;
+      font-weight: 800;
+      color: #0D3B8E;
+      min-width: 36px;
+      text-align: right;
+    }
+
+    .empty-search-state {
+      text-align: center;
+      padding: 36px 16px;
+      color: var(--text-muted);
+      font-size: 14px;
+      font-weight: 600;
+      display: none;
+    }
+
+    /* Botón + flotante circular azul zafiro con borde plateado */
+    .fab-add-wrap {
+      position: fixed;
+      right: 18px;
+      bottom: 82px;
+      z-index: 25;
+      padding: 2.5px;
+      border-radius: 50%;
+      background: var(--silver-border);
+      box-shadow: 0 8px 22px rgba(7, 29, 73, 0.38);
+    }
+
+    .fab-add-btn {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      border: none;
+      background: var(--sapphire-grad);
+      color: #FFFFFF;
+      font-size: 30px;
+      font-weight: 400;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: transform 0.16s ease;
+    }
+
+    .fab-add-btn:active {
+      transform: scale(0.93);
+    }
+
+    /* Menú inferior blanco fijo */
+    .bottom-nav {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 68px;
+      background: #FFFFFF;
+      border-top: 1.5px solid #DCE3EE;
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      z-index: 20;
+      box-shadow: 0 -4px 14px rgba(11, 30, 64, 0.06);
+    }
+
+    .nav-btn {
+      border: none;
+      background: transparent;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      color: #8896AB;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      padding: 6px 18px;
+      transition: color 0.2s;
+    }
+
+    .nav-btn svg {
+      width: 23px;
+      height: 23px;
+    }
+
+    .nav-btn.active {
+      color: var(--sapphire-main);
+    }
+
+    /* Vista de Ajustes dentro de Pantalla 2 */
+    .settings-panel {
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .settings-panel.active {
+      display: flex;
+    }
+
+    .settings-card {
+      background: #FFFFFF;
+      border: 1.5px solid #D5DEEB;
+      border-radius: 16px;
+      padding: 15px;
+      box-shadow: var(--shadow-soft);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .settings-card-text h4 {
+      font-size: 14.5px;
+      font-weight: 700;
+      color: var(--text-dark);
+      margin-bottom: 3px;
+    }
+
+    .settings-card-text p {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .btn-sapphire-sm {
+      border: 1.5px solid #C8D4E6;
+      background: var(--sapphire-grad);
+      color: #FFFFFF;
+      font-family: inherit;
+      font-size: 12.5px;
+      font-weight: 700;
+      padding: 8px 14px;
+      border-radius: 12px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    /* ================= PANTALLA 3: LECTOR ================= */
+    #screen-reader {
+      background-color: #E6E9EF;
+      transition: background-color 0.25s ease, opacity 0.35s ease;
+    }
+
+    #screen-reader.night-mode {
+      background-color: #0D131F;
+    }
+
+    .reader-topbar {
+      background: var(--sapphire-grad);
+      color: #FFFFFF;
+      padding: 12px 12px;
+      border-bottom: 2px solid #C5D1E2;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      z-index: 15;
+      flex-shrink: 0;
+    }
+
+    .icon-action-btn {
+      width: 38px;
+      height: 38px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      background: rgba(255, 255, 255, 0.12);
+      color: #FFFFFF;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.18s;
+    }
+
+    .icon-action-btn:active {
+      background: rgba(255, 255, 255, 0.28);
+    }
+
+    .icon-action-btn.bookmarked {
+      background: #FFD54F;
+      color: #071D49;
+      border-color: #FFFFFF;
+    }
+
+    .reader-doc-title {
+      flex: 1;
+      font-size: 15px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #F4F8FF;
+      padding: 0 4px;
+    }
+
+    /* Barra desplegable de búsqueda dentro del PDF */
+    .reader-search-bar {
+      background: #FFFFFF;
+      border-bottom: 1.5px solid #CFD8E6;
+      padding: 8px 12px;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      z-index: 14;
+    }
+
+    .reader-search-bar.open {
+      display: flex;
+    }
+
+    .reader-search-bar input {
+      flex: 1;
+      border: 1.5px solid #C4D0E2;
+      border-radius: 10px;
+      padding: 7px 11px;
+      font-family: inherit;
+      font-size: 14px;
+      outline: none;
+      color: var(--text-dark);
+    }
+
+    .reader-search-bar input:focus {
+      border-color: var(--sapphire-bright);
+    }
+
+    .search-match-count {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--sapphire-main);
+      white-space: nowrap;
+    }
+
+    /* Menú de 3 puntitos */
+    .reader-more-menu {
+      position: absolute;
+      top: 62px;
+      right: 12px;
+      background: #FFFFFF;
+      border: 1.5px solid #C8D4E6;
+      border-radius: 14px;
+      box-shadow: 0 12px 28px rgba(7, 29, 73, 0.24);
+      padding: 6px;
+      display: none;
+      flex-direction: column;
+      min-width: 210px;
+      z-index: 30;
+    }
+
+    .reader-more-menu.open {
+      display: flex;
+    }
+
+    .more-menu-item {
+      border: none;
+      background: transparent;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-family: inherit;
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--text-dark);
+      text-align: left;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+    }
+
+    .more-menu-item:active {
+      background: #EDF2FA;
+    }
+
+    /* Área central de la hoja de papel */
+    .reader-stage {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 12px 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      touch-action: pan-y;
+    }
+
+    .paper-sheet {
+      width: 100%;
+      max-width: 720px;
+      min-height: 520px;
+      background: #FFFFFF;
+      color: #1A2333;
+      border-radius: 6px;
+      border: 1px solid #D3DAE6;
+      box-shadow: 0 10px 30px rgba(10, 26, 58, 0.16);
+      padding: 26px 22px;
+      transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+      position: relative;
+    }
+
+    #screen-reader.night-mode .paper-sheet {
+      background: #172033;
+      color: #E7EEF9;
+      border-color: #2B3B59;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+    }
+
+    .paper-header-tag {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: #6B7B94;
+      border-bottom: 1px solid #E4E9F2;
+      padding-bottom: 10px;
+      margin-bottom: 18px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+
+    #screen-reader.night-mode .paper-header-tag {
+      color: #93A7C6;
+      border-bottom-color: #2A3954;
+    }
+
+    .paper-body {
+      font-size: 16px;
+      line-height: 1.72;
+      word-wrap: break-word;
+    }
+
+    .paper-body h2 {
+      font-size: 1.35em;
+      font-weight: 800;
+      color: #0D3B8E;
+      margin-bottom: 12px;
+      line-height: 1.3;
+    }
+
+    #screen-reader.night-mode .paper-body h2 {
+      color: #6EA8FF;
+    }
+
+    .paper-body h3 {
+      font-size: 1.1em;
+      font-weight: 700;
+      margin: 16px 0 8px;
+    }
+
+    .paper-body p {
+      margin-bottom: 14px;
+    }
+
+    .paper-body ul {
+      padding-left: 20px;
+      margin-bottom: 14px;
+    }
+
+    .paper-body li {
+      margin-bottom: 6px;
+    }
+
+    .paper-box {
+      background: #F4F7FC;
+      border-left: 4px solid #1656C9;
+      padding: 12px 14px;
+      border-radius: 8px;
+      margin: 14px 0;
+      font-size: 0.94em;
+    }
+
+    #screen-reader.night-mode .paper-box {
+      background: #1F2C45;
+      border-left-color: #5C9EFF;
+    }
+
+    .pdf-canvas-wrap {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .pdf-canvas-wrap canvas {
+      max-width: 100%;
+      height: auto !important;
+      border-radius: 4px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    }
+
+    #screen-reader.night-mode .pdf-canvas-wrap canvas {
+      filter: invert(0.88) hue-rotate(180deg);
+    }
+
+    mark.hl-yellow {
+      background-color: #FFE600;
+      color: #000000;
+      padding: 1px 3px;
+      border-radius: 4px;
+      font-weight: 700;
+    }
+
+    /* Barra inferior de control del Lector */
+    .reader-bottom-controls {
+      background: #FFFFFF;
+      border-top: 1.5px solid #CFD8E6;
+      padding: 10px 12px 12px;
+      z-index: 15;
+      flex-shrink: 0;
+      box-shadow: 0 -4px 16px rgba(10, 26, 58, 0.08);
+    }
+
+    #screen-reader.night-mode .reader-bottom-controls {
+      background: #121A2B;
+      border-top-color: #273652;
+      color: #E7EEF9;
+    }
+
+    .reader-progress-wrap {
+      width: 100%;
+      height: 5px;
+      border-radius: 999px;
+      background: #DCE3EE;
+      overflow: hidden;
+      margin-bottom: 9px;
+    }
+
+    #screen-reader.night-mode .reader-progress-wrap {
+      background: #25344F;
+    }
+
+    .reader-progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #0D3B8E, #2979FF);
+      width: 10%;
+      transition: width 0.25s ease;
+    }
+
+    .reader-page-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 9px;
+    }
+
+    .page-step-btn {
+      border: 1.5px solid #C5D1E2;
+      background: var(--sapphire-grad);
+      color: #FFFFFF;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 7px 14px;
+      border-radius: 11px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .page-step-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .page-indicator-text {
+      font-size: 13.5px;
+      font-weight: 800;
+      color: var(--sapphire-dark);
+    }
+
+    #screen-reader.night-mode .page-indicator-text {
+      color: #DCE8FF;
+    }
+
+    .reader-tools-row {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 6px;
+    }
+
+    .tool-chip-btn {
+      border: 1px solid #D2DBE8;
+      background: #F4F6FA;
+      color: #163264;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 7px 4px;
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      cursor: pointer;
+    }
+
+    #screen-reader.night-mode .tool-chip-btn {
+      background: #1C273E;
+      border-color: #2E3F61;
+      color: #D5E3FA;
+    }
+
+    .tool-chip-btn.active-chip {
+      background: #0D3B8E;
+      color: #FFFFFF;
+      border-color: #C8D4E6;
+    }
+
+    /* Modal de confirmación "¿Seguir donde te quedaste?" */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(5, 15, 35, 0.62);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 50;
+    }
+
+    .modal-backdrop.open {
+      display: flex;
+    }
+
+    .modal-card {
+      width: 100%;
+      max-width: 340px;
+      background: #FFFFFF;
+      border: 2px solid #C8D4E6;
+      border-radius: 20px;
+      padding: 22px 18px;
+      box-shadow: 0 18px 40px rgba(7, 29, 73, 0.35);
+      text-align: center;
+    }
+
+    .modal-icon {
+      width: 50px;
+      height: 50px;
+      border-radius: 14px;
+      background: var(--sapphire-grad);
+      color: #FFFFFF;
+      margin: 0 auto 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1.5px solid #C8D4E6;
+    }
+
+    .modal-card h3 {
+      font-size: 17px;
+      font-weight: 800;
+      color: var(--text-dark);
+      margin-bottom: 6px;
+    }
+
+    .modal-card p {
+      font-size: 13.5px;
+      color: var(--text-muted);
+      margin-bottom: 18px;
+      line-height: 1.45;
+    }
+
+    .modal-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .btn-modal-secondary {
+      border: 1.5px solid #C8D4E6;
+      background: #F2F4F8;
+      color: #1A3360;
+      font-family: inherit;
+      font-size: 13.5px;
+      font-weight: 700;
+      padding: 10px;
+      border-radius: 12px;
+      cursor: pointer;
+    }
+
+    .btn-modal-primary {
+      border: 1.5px solid #C8D4E6;
+      background: var(--sapphire-grad);
+      color: #FFFFFF;
+      font-family: inherit;
+      font-size: 13.5px;
+      font-weight: 700;
+      padding: 10px;
+      border-radius: 12px;
+      cursor: pointer;
+    }
+
+    /* Toast de aviso */
+    .toast-msg {
+      position: fixed;
+      bottom: 92px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: #082356;
+      color: #FFFFFF;
+      border: 1.5px solid #C8D4E6;
+      padding: 10px 16px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s, transform 0.25s;
+      z-index: 60;
+      white-space: nowrap;
+    }
+
+    .toast-msg.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    @media (max-width: 360px) {
+      .recent-name { font-size: 10.5px; }
+      .recent-meta { font-size: 9px; }
+      .recent-cover { width: 56px; height: 70px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ================= PANTALLA 1: CARGA / SPLASH ================= -->
+  <section id="screen-splash" class="screen active" aria-label="Pantalla de carga">
+    <div class="neon-waves">
+      <div class="wave-glow"></div>
+      <div class="wave-ring"></div>
+      <div class="wave-ring"></div>
+      <div class="wave-ring"></div>
+    </div>
+
+    <div class="splash-content">
+      <div class="glass-pdf-3d" aria-hidden="true">
+        <div class="glass-pdf-badge">PDF</div>
+      </div>
+
+      <h1 class="splash-title">LECTOR PDF</h1>
+      <p class="splash-subtitle">RÁPIDO • SEGURO • PREMIUM</p>
+
+      <div class="glass-capsule" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="splash-progressbar">
+        <div class="glass-capsule-track">
+          <div class="glass-capsule-fill" id="splash-fill"></div>
+        </div>
+      </div>
+      <p class="splash-percent-text" id="splash-percent-text">Cargando... 0%</p>
+    </div>
+  </section>
+
+  <!-- ================= PANTALLA 2: PRINCIPAL ================= -->
+  <section id="screen-home" class="screen" aria-label="Pantalla principal">
+    <header class="top-sapphire-bar">
+      <div class="brand-row">
+        <div class="silver-pdf-icon"><span>PDF</span></div>
+        <div class="brand-title-silver">LECTOR PDF</div>
+      </div>
+    </header>
+
+    <main class="home-scroll">
+      <!-- Buscador en vivo -->
+      <div class="search-box">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="text" id="home-search-input" placeholder="Buscar PDF..." autocomplete="off" />
+        <button type="button" class="clear-search-btn" id="home-clear-search" aria-label="Limpiar búsqueda">✕</button>
+      </div>
+
+      <!-- Vista Inicio / Biblioteca -->
+      <div id="home-docs-view">
+        <div id="recents-section">
+          <h2 class="section-heading">Recientes</h2>
+          <div class="recents-grid" id="recents-grid"></div>
+        </div>
+
+        <div id="library-section">
+          <h2 class="section-heading">Mi Biblioteca</h2>
+          <div class="library-list" id="library-list"></div>
+        </div>
+
+        <div class="empty-search-state" id="empty-search-state">
+          No se encontraron documentos PDF con ese nombre.
+        </div>
+      </div>
+
+      <!-- Vista Ajustes -->
+      <div class="settings-panel" id="home-settings-view">
+        <h2 class="section-heading">Ajustes del Lector</h2>
+        <div class="settings-card">
+          <div class="settings-card-text">
+            <h4>Modo Noche predeterminado</h4>
+            <p>Abre los documentos con fondo oscuro y lectura descansada.</p>
+          </div>
+          <button type="button" class="btn-sapphire-sm" id="toggle-default-night">Desactivado</button>
+        </div>
+        <div class="settings-card">
+          <div class="settings-card-text">
+            <h4>Reiniciar progreso guardado</h4>
+            <p>Restaura los porcentajes y marcadores de lectura iniciales.</p>
+          </div>
+          <button type="button" class="btn-sapphire-sm" id="reset-progress-btn">Restaurar</button>
+        </div>
+        <div class="settings-card">
+          <div class="settings-card-text">
+            <h4>Versión de LECTOR PDF</h4>
+            <p>Edición Zafiro • Compatible con móviles y GitHub Pages</p>
+          </div>
+          <span style="font-size:12px;font-weight:800;color:#0D3B8E;">v1.0</span>
+        </div>
+      </div>
+    </main>
+
+    <!-- Selector oculto para subir PDFs reales del dispositivo -->
+    <input type="file" id="pdf-file-input" accept="application/pdf,.pdf" hidden />
+
+    <!-- Botón + flotante circular azul zafiro con borde plateado -->
+    <div class="fab-add-wrap" id="fab-add-wrap">
+      <button type="button" class="fab-add-btn" id="fab-add-btn" title="Agregar PDF desde el dispositivo" aria-label="Agregar PDF">+</button>
+    </div>
+
+    <!-- Menú inferior blanco fijo -->
+    <nav class="bottom-nav" aria-label="Navegación principal">
+      <button type="button" class="nav-btn active" data-tab="inicio">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 3L2 12h3v8h6v-6h2v6h6v-8h3L12 3z"/>
+        </svg>
+        <span>Inicio</span>
+      </button>
+      <button type="button" class="nav-btn" data-tab="biblioteca">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+        </svg>
+        <span>Biblioteca</span>
+      </button>
+      <button type="button" class="nav-btn" data-tab="ajustes">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+        <span>Ajustes</span>
+      </button>
+    </nav>
+  </section>
+
+  <!-- ================= PANTALLA 3: LECTOR ================= -->
+  <section id="screen-reader" class="screen" aria-label="Lector de PDF">
+    <header class="reader-topbar">
+      <button type="button" class="icon-action-btn" id="reader-back-btn" title="Volver a Principal" aria-label="Volver">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"></polyline>
+        </svg>
+      </button>
+
+      <div class="reader-doc-title" id="reader-doc-title">Documento.pdf</div>
+
+      <button type="button" class="icon-action-btn" id="reader-search-toggle" title="Buscar palabra" aria-label="Buscar en PDF">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+      </button>
+
+      <button type="button" class="icon-action-btn" id="reader-bookmark-top" title="Guardar marcador" aria-label="Marcador">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+        </svg>
+      </button>
+
+      <button type="button" class="icon-action-btn" id="reader-more-btn" title="Más opciones" aria-label="Más opciones">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor">
+          <circle cx="12" cy="5" r="2"></circle>
+          <circle cx="12" cy="12" r="2"></circle>
+          <circle cx="12" cy="19" r="2"></circle>
+        </svg>
+      </button>
+    </header>
+
+    <!-- Barra de búsqueda interna del PDF -->
+    <div class="reader-search-bar" id="reader-search-bar">
+      <input type="text" id="reader-search-input" placeholder="Buscar palabra en el PDF..." autocomplete="off" />
+      <span class="search-match-count" id="search-match-count">0 coincidencias</span>
+      <button type="button" class="clear-search-btn visible" id="reader-search-close" aria-label="Cerrar búsqueda">✕</button>
+    </div>
+
+    <!-- Menú de 3 puntitos -->
+    <div class="reader-more-menu" id="reader-more-menu">
+      <button type="button" class="more-menu-item" id="menu-first-page">⏮ Ir a la página 1</button>
+      <button type="button" class="more-menu-item" id="menu-last-page">⏭ Ir a la última página</button>
+      <button type="button" class="more-menu-item" id="menu-toggle-night">🌙 Alternar Modo Noche</button>
+      <button type="button" class="more-menu-item" id="menu-share-doc">📤 Compartir documento</button>
+    </div>
+
+    <!-- Hoja de papel central -->
+    <div class="reader-stage" id="reader-stage">
+      <article class="paper-sheet" id="paper-sheet">
+        <div class="paper-header-tag">
+          <span id="paper-doc-label">LECTOR PDF</span>
+          <span id="paper-page-badge">PÁG. 1</span>
+        </div>
+        <div class="paper-body" id="paper-body"></div>
+      </article>
+    </div>
+
+    <!-- Barra inferior de control -->
+    <footer class="reader-bottom-controls">
+      <div class="reader-progress-wrap">
+        <div class="reader-progress-bar" id="reader-progress-bar"></div>
+      </div>
+
+      <div class="reader-page-nav">
+        <button type="button" class="page-step-btn" id="prev-page-btn">◀ Anterior</button>
+        <span class="page-indicator-text" id="page-indicator-text">Página 1 de 12</span>
+        <button type="button" class="page-step-btn" id="next-page-btn">Siguiente ▶</button>
+      </div>
+
+      <div class="reader-tools-row">
+        <button type="button" class="tool-chip-btn" id="zoom-out-btn">
+          <span>🔍−</span>
+          <span>Zoom -</span>
+        </button>
+        <button type="button" class="tool-chip-btn" id="zoom-in-btn">
+          <span>🔍+</span>
+          <span>Zoom +</span>
+        </button>
+        <button type="button" class="tool-chip-btn" id="night-mode-btn">
+          <span>🌙</span>
+          <span id="night-mode-label">Noche</span>
+        </button>
+        <button type="button" class="tool-chip-btn" id="bookmark-chip-btn">
+          <span>🔖</span>
+          <span>Marcador</span>
+        </button>
+        <button type="button" class="tool-chip-btn" id="share-chip-btn">
+          <span>📤</span>
+          <span>Compartir</span>
+        </button>
+      </div>
+    </footer>
+  </section>
+
+  <!-- Modal "¿Seguir donde te quedaste?" -->
+  <div class="modal-backdrop" id="resume-modal" role="dialog" aria-modal="true" aria-labelledby="resume-modal-title">
+    <div class="modal-card">
+      <div class="modal-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+        </svg>
+      </div>
+      <h3 id="resume-modal-title">¿Seguir donde te quedaste?</h3>
+      <p id="resume-modal-desc">Tienes un marcador guardado en la página 1 de este documento.</p>
+      <div class="modal-actions">
+        <button type="button" class="btn-modal-secondary" id="modal-restart-btn">Empezar de nuevo</button>
+        <button type="button" class="btn-modal-primary" id="modal-continue-btn">Sí, continuar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast flotante -->
+  <div class="toast-msg" id="toast-msg"></div>
+
+  <script>
+    // Configurar worker de PDF.js si cargó correctamente
+    if (window.pdfjsLib) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+
+    const STORAGE_KEY = 'lector_pdf_zafiro_state_v1';
+
+    // Documentos iniciales requeridos con contenido real por páginas
+    const DEFAULT_DOCS = [
+      {
+        id: 'doc-informe-2024',
+        section: 'recents',
+        coverTitle: 'INFORME 2024',
+        name: 'Informe_2024.pdf',
+        size: '2.1 MB',
+        totalPages: 12,
+        progress: 68,
+        savedPage: 8,
+        topic: 'Informe Anual de Operaciones, Finanzas y Crecimiento Regional 2024',
+        highlights: [
+          'Incremento neto del 34% en eficiencia operativa durante el tercer trimestre.',
+          'Optimización logística en rutas urbanas con reducción del 18% en tiempos de entrega.',
+          'Cumplimiento presupuestario del 97.4% en todas las áreas estratégicas.'
+        ]
+      },
+      {
+        id: 'doc-facture-enero',
+        section: 'recents',
+        coverTitle: 'FACTURA ENERO',
+        name: 'Facture_Enero.pdf',
+        size: '980 KB',
+        totalPages: 4,
+        progress: 100,
+        savedPage: 4,
+        topic: 'Comprobante de Facturación Electrónica y Detalle Tributario - Periodo Enero',
+        highlights: [
+          'Subtotal de servicios profesionales y licencias digitales: S/ 4,250.00.',
+          'Impuesto General a las Ventas (IGV 18%) aplicado conforme a normativa vigente.',
+          'Estado del documento: Cancelado y verificado sin observaciones contables.'
+        ]
+      },
+      {
+        id: 'doc-proyecto-guia',
+        section: 'recents',
+        coverTitle: 'PROYECTO',
+        name: 'Proyecto_GUIA.pdf',
+        size: '3.4 MB',
+        totalPages: 20,
+        progress: 45,
+        savedPage: 9,
+        topic: 'Guía Maestra de Implementación, Arquitectura Técnica y Control de Calidad',
+        highlights: [
+          'Fase 1: Levantamiento de requerimientos funcionales y diseño de interfaz.',
+          'Fase 2: Desarrollo modular con almacenamiento persistente y respuesta móvil.',
+          'Fase 3: Pruebas de rendimiento, accesibilidad y despliegue continuo en producción.'
+        ]
+      },
+      {
+        id: 'doc-manual-usuario',
+        section: 'library',
+        coverTitle: 'MANUAL',
+        name: 'Manual_Usuario.pdf',
+        size: '1.5 MB',
+        totalPages: 8,
+        progress: 30,
+        savedPage: 3,
+        topic: 'Manual Oficial de Uso, Configuración Rápida y Solución de Problemas',
+        highlights: [
+          'Navegación táctil intuitiva mediante deslizamiento lateral o botones inferiores.',
+          'Uso del buscador instantáneo para localizar términos clave en segundos.',
+          'Activación del Modo Noche para lectura prolongada en ambientes con poca luz.'
+        ]
+      },
+      {
+        id: 'doc-guia-usuario',
+        section: 'library',
+        coverTitle: 'GUÍA',
+        name: 'Guía_Usuario.pdf',
+        size: '2.2 MB',
+        totalPages: 16,
+        progress: 75,
+        savedPage: 12,
+        topic: 'Guía Avanzada de Productividad, Marcadores Inteligentes y Gestión Documental',
+        highlights: [
+          'Organización automática de documentos recientes y biblioteca personal.',
+          'Guardado inteligente de última página leída por cada archivo PDF.',
+          'Importación directa de archivos PDF locales desde cualquier dispositivo móvil.'
+        ]
+      }
+    ];
+
+    // Estado de la aplicación
+    let appState = {
+      docs: [],
+      defaultNightMode: false
+    };
+
+    // Mapas en memoria para archivos PDF reales subidos durante la sesión
+    const uploadedPdfInstances = new Map();
+    const uploadedPdfTexts = new Map();
+
+    // Estado activo del lector
+    let currentDoc = null;
+    let currentPage = 1;
+    let currentZoom = 100;
+    let isNightMode = false;
+    let currentSearchQuery = '';
+    let activeTab = 'inicio';
+
+    // Cargar estado persistente
+    function loadState() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && Array.isArray(parsed.docs) && parsed.docs.length > 0) {
+            appState = parsed;
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn('No se pudo leer localStorage:', e);
+      }
+      appState = {
+        docs: JSON.parse(JSON.stringify(DEFAULT_DOCS)),
+        defaultNightMode: false
+      };
+      saveState();
+    }
+
+    function saveState() {
+      try {
+        // Solo guardamos metadatos serializables (no objetos binarios pesados)
+        const serializableDocs = appState.docs.map(d => ({
+          id: d.id,
+          section: d.section,
+          coverTitle: d.coverTitle,
+          name: d.name,
+          size: d.size,
+          totalPages: d.totalPages,
+          progress: d.progress,
+          savedPage: d.savedPage,
+          topic: d.topic,
+          highlights: d.highlights,
+          isUploaded: !!d.isUploaded
+        }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          docs: serializableDocs,
+          defaultNightMode: appState.defaultNightMode
+        }));
+      } catch (e) {
+        console.warn('No se pudo guardar en localStorage:', e);
+      }
+    }
+
+    // Mostrar notificación toast breve
+    let toastTimer = null;
+    function showToast(msg) {
+      const toast = document.getElementById('toast-msg');
+      toast.textContent = msg;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 2300);
+    }
+
+    // ================= PANTALLA 1: CARGA 0% -> 100% =================
+    function runSplashSequence() {
+      const fillEl = document.getElementById('splash-fill');
+      const textEl = document.getElementById('splash-percent-text');
+      const barEl = document.getElementById('splash-progressbar');
+      const splashScreen = document.getElementById('screen-splash');
+      const homeScreen = document.getElementById('screen-home');
+
+      const duration = 2900; // ~3 segundos
+      const startTime = performance.now();
+
+      function tick(now) {
+        const elapsed = now - startTime;
+        const pct = Math.min(100, Math.floor((elapsed / duration) * 100));
+        fillEl.style.width = pct + '%';
+        textEl.textContent = `Cargando... ${pct}%`;
+        barEl.setAttribute('aria-valuenow', pct);
+
+        if (pct < 100) {
+          requestAnimationFrame(tick);
+        } else {
+          setTimeout(() => {
+            splashScreen.classList.remove('active');
+            homeScreen.classList.add('active');
+          }, 220);
+        }
+      }
+
+      requestAnimationFrame(tick);
+    }
+
+    // ================= PANTALLA 2: RENDERIZADO PRINCIPAL =================
+    function renderHomeLists() {
+      const query = document.getElementById('home-search-input').value.trim().toLowerCase();
+      const recentsGrid = document.getElementById('recents-grid');
+      const libraryList = document.getElementById('library-list');
+      const recentsSection = document.getElementById('recents-section');
+      const librarySection = document.getElementById('library-section');
+      const emptyState = document.getElementById('empty-search-state');
+
+      const filtered = appState.docs.filter(doc =>
+        doc.name.toLowerCase().includes(query)
+      );
+
+      const recents = filtered.filter(d => d.section === 'recents');
+      const library = filtered.filter(d => d.section === 'library');
+
+      // Renderizar tarjetas de Recientes
+      recentsGrid.innerHTML = '';
+      recents.forEach(doc => {
+        const wrap = document.createElement('div');
+        wrap.className = 'recent-card-wrap';
+        wrap.innerHTML = `
+          <div class="recent-card">
+            <div class="recent-cover">
+              <span class="recent-cover-label">${escapeHtml(doc.coverTitle)}</span>
+            </div>
+            <div class="recent-name" title="${escapeHtml(doc.name)}">${escapeHtml(doc.name)}</div>
+            <div class="recent-meta">${escapeHtml(doc.size)} • ${doc.totalPages} páginas</div>
+            <div class="recent-progress-row">
+              <span class="recent-percent">${doc.progress}%</span>
+              <div class="silver-progress-track">
+                <div class="silver-progress-fill" style="width: ${doc.progress}%"></div>
+              </div>
+            </div>
+          </div>
+        `;
+        wrap.addEventListener('click', () => handleDocumentClick(doc.id));
+        recentsGrid.appendChild(wrap);
+      });
+
+      // Renderizar filas de Mi Biblioteca
+      libraryList.innerHTML = '';
+      library.forEach(doc => {
+        const item = document.createElement('div');
+        item.className = 'library-item';
+        item.innerHTML = `
+          <div class="lib-cover">
+            <span>${escapeHtml(doc.coverTitle)}</span>
+          </div>
+          <div class="lib-info">
+            <div class="lib-name" title="${escapeHtml(doc.name)}">${escapeHtml(doc.name)}</div>
+            <div class="lib-meta">${escapeHtml(doc.size)} • ${doc.totalPages} páginas</div>
+            <div class="lib-progress-row">
+              <div class="lib-progress-track">
+                <div class="lib-progress-fill" style="width: ${doc.progress}%"></div>
+              </div>
+              <span class="lib-percent">${doc.progress}%</span>
+            </div>
+          </div>
+        `;
+        item.addEventListener('click', () => handleDocumentClick(doc.id));
+        libraryList.appendChild(item);
+      });
+
+      // Controlar visibilidad según pestaña activa y búsqueda
+      if (activeTab === 'biblioteca') {
+        recentsSection.style.display = 'none';
+        librarySection.style.display = library.length > 0 ? 'block' : 'none';
+      } else {
+        recentsSection.style.display = recents.length > 0 ? 'block' : 'none';
+        librarySection.style.display = library.length > 0 ? 'block' : 'none';
+      }
+
+      const visibleCount = activeTab === 'biblioteca' ? library.length : (recents.length + library.length);
+      emptyState.style.display = visibleCount === 0 ? 'block' : 'none';
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    // ================= ABRIR PDF Y PREGUNTAR MARCADOR =================
+    function handleDocumentClick(docId) {
+      const doc = appState.docs.find(d => d.id === docId);
+      if (!doc) return;
+
+      // Si es un PDF subido en otra sesión pasada sin binario en memoria
+      if (doc.isUploaded && !uploadedPdfInstances.has(doc.id)) {
+        showToast('Vuelve a seleccionar este PDF con el botón + para abrir su archivo local');
+        return;
+      }
+
+      if (doc.savedPage && doc.savedPage > 1 && doc.savedPage <= doc.totalPages) {
+        const modal = document.getElementById('resume-modal');
+        const desc = document.getElementById('resume-modal-desc');
+        desc.textContent = `Te quedaste en la página ${doc.savedPage} de ${doc.totalPages} en "${doc.name}".`;
+        modal.classList.add('open');
+
+        document.getElementById('modal-continue-btn').onclick = () => {
+          modal.classList.remove('open');
+          openReader(doc, doc.savedPage);
+        };
+        document.getElementById('modal-restart-btn').onclick = () => {
+          modal.classList.remove('open');
+          openReader(doc, 1);
+        };
+      } else {
+        openReader(doc, 1);
+      }
+    }
+
+    // ================= PANTALLA 3: LECTOR DE PDF =================
+    function openReader(doc, startPage) {
+      currentDoc = doc;
+      currentPage = Math.max(1, Math.min(startPage, doc.totalPages));
+      currentZoom = 100;
+      currentSearchQuery = '';
+      isNightMode = appState.defaultNightMode;
+
+      document.getElementById('reader-doc-title').textContent = doc.name;
+      document.getElementById('reader-search-input').value = '';
+      document.getElementById('reader-search-bar').classList.remove('open');
+      document.getElementById('reader-more-menu').classList.remove('open');
+
+      syncNightModeUI();
+      updateReaderProgressAndBookmark();
+      renderCurrentPage();
+
+      document.getElementById('screen-home').classList.remove('active');
+      document.getElementById('screen-reader').classList.add('active');
+    }
+
+    function returnToHome() {
+      document.getElementById('reader-more-menu').classList.remove('open');
+      document.getElementById('screen-reader').classList.remove('active');
+      document.getElementById('screen-home').classList.add('active');
+      renderHomeLists();
+    }
+
+    function updateReaderProgressAndBookmark() {
+      if (!currentDoc) return;
+
+      // Calcular nuevo porcentaje de lectura y actualizar en el documento
+      const calculatedPct = Math.round((currentPage / currentDoc.totalPages) * 100);
+      currentDoc.progress = calculatedPct;
+      currentDoc.savedPage = currentPage;
+      saveState();
+
+      document.getElementById('page-indicator-text').textContent = `Página ${currentPage} de ${currentDoc.totalPages}`;
+      document.getElementById('paper-page-badge').textContent = `PÁG. ${currentPage} / ${currentDoc.totalPages}`;
+      document.getElementById('paper-doc-label').textContent = currentDoc.name;
+      document.getElementById('reader-progress-bar').style.width = `${calculatedPct}%`;
+
+      document.getElementById('prev-page-btn').disabled = currentPage <= 1;
+      document.getElementById('next-page-btn').disabled = currentPage >= currentDoc.totalPages;
+
+      const topBookmark = document.getElementById('reader-bookmark-top');
+      const chipBookmark = document.getElementById('bookmark-chip-btn');
+      topBookmark.classList.add('bookmarked');
+      chipBookmark.classList.add('active-chip');
+    }
+
+    // Generar contenido realista para cada página de los documentos incluidos
+    function buildSamplePageHtml(doc, pageNum) {
+      const hList = doc.highlights || [];
+      const h1 = hList[0] || 'Control y trazabilidad completa de información.';
+      const h2 = hList[1] || 'Estándares de calidad y cumplimiento verificados.';
+      const h3 = hList[2] || 'Resultados consolidados listos para revisión ejecutiva.';
+
+      const sectionTitles = [
+        'Resumen Ejecutivo y Alcance',
+        'Análisis Detallado de Indicadores',
+        'Estructura Operativa y Metodología',
+        'Resultados Consolidados del Periodo',
+        'Control de Calidad y Validación',
+        'Proyecciones y Plan de Acción'
+      ];
+      const secTitle = sectionTitles[(pageNum - 1) % sectionTitles.length];
+
+      return `
+        <h2>${escapeHtml(doc.name.replace('.pdf', ''))} — Sección ${pageNum}: ${secTitle}</h2>
+        <p><strong>Tema central:</strong> ${escapeHtml(doc.topic || 'Documentación corporativa')}.</p>
+        <p>En la página <strong>${pageNum}</strong> de <strong>${doc.totalPages}</strong> se presentan los registros verificados correspondientes a esta etapa del documento. Cada apartado ha sido estructurado para facilitar la lectura rápida, el seguimiento de métricas y la toma de decisiones respaldada por datos.</p>
+        <div class="paper-box">
+          <strong>Punto clave de la página ${pageNum}:</strong> ${escapeHtml(hList[(pageNum - 1) % hList.length] || h1)}
+        </div>
+        <h3>Puntos principales revisados</h3>
+        <ul>
+          <li>${escapeHtml(h1)}</li>
+          <li>${escapeHtml(h2)}</li>
+          <li>${escapeHtml(h3)}</li>
+        </ul>
+        <p>Observación técnica (Folio #${100 + pageNum}): Todos los parámetros registrados en esta hoja mantienen consistencia con las páginas anteriores del archivo <em>${escapeHtml(doc.name)}</em> y quedan disponibles para consulta o exportación inmediata.</p>
+      `;
+    }
+
+    function applyYellowHighlight(htmlContent, query) {
+      if (!query) return { html: htmlContent, count: 0 };
+      const safeQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`(${safeQuery})`, 'gi');
+      let count = 0;
+
+      // Resaltar solo texto fuera de etiquetas HTML
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = htmlContent;
+
+      function walk(node) {
+        if (node.nodeType === 3) {
+          const val = node.nodeValue;
+          if (regex.test(val)) {
+            const span = document.createElement('span');
+            span.innerHTML = val.replace(regex, (match) => {
+              count++;
+              return `<mark class="hl-yellow">${match}</mark>`;
+            });
+            node.parentNode.replaceChild(span, node);
+          }
+        } else if (node.nodeType === 1 && node.tagName !== 'SCRIPT' && node.tagName !== 'STYLE') {
+          Array.from(node.childNodes).forEach(walk);
+        }
+      }
+
+      walk(tempDiv);
+      return { html: tempDiv.innerHTML, count };
+    }
+
+    async function renderCurrentPage() {
+      if (!currentDoc) return;
+      const paperBody = document.getElementById('paper-body');
+      const matchBadge = document.getElementById('search-match-count');
+
+      // Aplicar zoom real al tamaño de fuente
+      paperBody.style.fontSize = `${(16 * currentZoom) / 100}px`;
+
+      // Si es un PDF real cargado desde el dispositivo
+      if (currentDoc.isUploaded && uploadedPdfInstances.has(currentDoc.id)) {
+        const pdfDoc = uploadedPdfInstances.get(currentDoc.id);
+        paperBody.innerHTML = '<p style="text-align:center;padding:24px;color:#5C6B82;">Renderizando página...</p>';
+
+        try {
+          const page = await pdfDoc.getPage(currentPage);
+          const scale = (currentZoom / 100) * 1.35;
+          const viewport = page.getViewport({ scale });
+
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          canvas.height = viewport.height;
+          canvas.width = viewport.width;
+
+          await page.render({ canvasContext: context, viewport }).promise;
+
+          const wrap = document.createElement('div');
+          wrap.className = 'pdf-canvas-wrap';
+          wrap.appendChild(canvas);
+
+          // Extraer texto de la página para permitir búsqueda con resaltado amarillo
+          const textContent = await page.getTextContent();
+          const pageText = textContent.items.map(item => item.str).join(' ');
+          if (currentSearchQuery && pageText.trim().length > 0) {
+            const highlighted = applyYellowHighlight(`<p>${escapeHtml(pageText)}</p>`, currentSearchQuery);
+            matchBadge.textContent = `${highlighted.count} coincidencias`;
+            if (highlighted.count > 0) {
+              const textBox = document.createElement('div');
+              textBox.className = 'paper-box';
+              textBox.innerHTML = `<strong>Coincidencias encontradas en texto:</strong><br>${highlighted.html}`;
+              wrap.prepend(textBox);
+            }
+          } else {
+            matchBadge.textContent = '0 coincidencias';
+          }
+
+          paperBody.innerHTML = '';
+          paperBody.appendChild(wrap);
+        } catch (err) {
+          paperBody.innerHTML = `<p>No se pudo renderizar esta página del archivo PDF.</p>`;
+        }
+        return;
+      }
+
+      // Si es uno de los documentos de ejemplo incluidos
+      const rawHtml = buildSamplePageHtml(currentDoc, currentPage);
+      const { html, count } = applyYellowHighlight(rawHtml, currentSearchQuery);
+      paperBody.innerHTML = html;
+      matchBadge.textContent = `${count} coincidencia${count === 1 ? '' : 's'}`;
+    }
+
+    function goToPage(targetPage) {
+      if (!currentDoc) return;
+      const clamped = Math.max(1, Math.min(targetPage, currentDoc.totalPages));
+      if (clamped === currentPage) return;
+      currentPage = clamped;
+      document.getElementById('reader-stage').scrollTop = 0;
+      updateReaderProgressAndBookmark();
+      renderCurrentPage();
+    }
+
+    function syncNightModeUI() {
+      const readerEl = document.getElementById('screen-reader');
+      const btn = document.getElementById('night-mode-btn');
+      const label = document.getElementById('night-mode-label');
+
+      if (isNightMode) {
+        readerEl.classList.add('night-mode');
+        btn.classList.add('active-chip');
+        label.textContent = 'Claro';
+      } else {
+        readerEl.classList.remove('night-mode');
+        btn.classList.remove('active-chip');
+        label.textContent = 'Noche';
+      }
+    }
+
+    // ================= SUBIR PDF REAL CON EL BOTÓN + =================
+    async function handleFileSelected(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+        showToast('Por favor selecciona un archivo con formato PDF');
+        event.target.value = '';
+        return;
+      }
+
+      showToast('Cargando PDF...');
+
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        let totalPages = 1;
+        let pdfInstance = null;
+
+        if (window.pdfjsLib) {
+          pdfInstance = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          totalPages = pdfInstance.numPages || 1;
+        }
+
+        const sizeKB = file.size / 1024;
+        const sizeLabel = sizeKB >= 1024
+          ? `${(sizeKB / 1024).toFixed(1)} MB`
+          : `${Math.max(1, Math.round(sizeKB))} KB`;
+
+        const cleanTitle = file.name.replace(/\.pdf$/i, '').slice(0, 14).toUpperCase();
+        const newId = 'doc-user-' + Date.now();
+
+        const newDoc = {
+          id: newId,
+          section: 'library',
+          coverTitle: cleanTitle || 'PDF',
+          name: file.name,
+          size: sizeLabel,
+          totalPages: totalPages,
+          progress: 0,
+          savedPage: 1,
+          topic: 'Documento PDF importado desde el dispositivo',
+          highlights: [],
+          isUploaded: true
+        };
+
+        if (pdfInstance) {
+          uploadedPdfInstances.set(newId, pdfInstance);
+        }
+
+        appState.docs.unshift(newDoc);
+        saveState();
+        renderHomeLists();
+        showToast(`"${file.name}" agregado a Mi Biblioteca`);
+      } catch (err) {
+        console.error(err);
+        showToast('Error al leer el archivo PDF seleccionado');
+      } finally {
+        event.target.value = '';
+      }
+    }
+
+    // ================= INICIALIZACIÓN DE EVENTOS =================
+    document.addEventListener('DOMContentLoaded', () => {
+      loadState();
+      renderHomeLists();
+      runSplashSequence();
+
+      // Buscador en Pantalla 2
+      const homeSearchInput = document.getElementById('home-search-input');
+      const homeClearBtn = document.getElementById('home-clear-search');
+
+      homeSearchInput.addEventListener('input', () => {
+        homeClearBtn.classList.toggle('visible', homeSearchInput.value.length > 0);
+        renderHomeLists();
+      });
+
+      homeClearBtn.addEventListener('click', () => {
+        homeSearchInput.value = '';
+        homeClearBtn.classList.remove('visible');
+        renderHomeLists();
+      });
+
+      // Botón + flotante
+      const fileInput = document.getElementById('pdf-file-input');
+      document.getElementById('fab-add-btn').addEventListener('click', () => fileInput.click());
+      fileInput.addEventListener('change', handleFileSelected);
+
+      // Menú inferior (Inicio / Biblioteca / Ajustes)
+      const navBtns = document.querySelectorAll('.nav-btn');
+      const docsView = document.getElementById('home-docs-view');
+      const settingsView = document.getElementById('home-settings-view');
+      const fabWrap = document.getElementById('fab-add-wrap');
+
+      navBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          navBtns.forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          activeTab = btn.dataset.tab;
+
+          if (activeTab === 'ajustes') {
+            docsView.style.display = 'none';
+            settingsView.classList.add('active');
+            fabWrap.style.display = 'none';
+          } else {
+            settingsView.classList.remove('active');
+            docsView.style.display = 'block';
+            fabWrap.style.display = 'block';
+            renderHomeLists();
+          }
+        });
+      });
+
+      // Ajustes
+      const defaultNightBtn = document.getElementById('toggle-default-night');
+      defaultNightBtn.textContent = appState.defaultNightMode ? 'Activado' : 'Desactivado';
+      defaultNightBtn.addEventListener('click', () => {
+        appState.defaultNightMode = !appState.defaultNightMode;
+        defaultNightBtn.textContent = appState.defaultNightMode ? 'Activado' : 'Desactivado';
+        saveState();
+        showToast(`Modo Noche predeterminado: ${defaultNightBtn.textContent}`);
+      });
+
+      document.getElementById('reset-progress-btn').addEventListener('click', () => {
+        appState.docs = JSON.parse(JSON.stringify(DEFAULT_DOCS));
+        uploadedPdfInstances.clear();
+        saveState();
+        renderHomeLists();
+        showToast('Progreso y documentos restaurados');
+      });
+
+      // Controles de Pantalla 3 (Lector)
+      document.getElementById('reader-back-btn').addEventListener('click', returnToHome);
+
+      document.getElementById('prev-page-btn').addEventListener('click', () => goToPage(currentPage - 1));
+      document.getElementById('next-page-btn').addEventListener('click', () => goToPage(currentPage + 1));
+
+      // Deslizar (swipe) izquierda/derecha para cambiar de página
+      let touchStartX = 0;
+      let touchStartY = 0;
+      const readerStage = document.getElementById('reader-stage');
+
+      readerStage.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 1) {
+          touchStartX = e.touches[0].clientX;
+          touchStartY = e.touches[0].clientY;
+        }
+      }, { passive: true });
+
+      readerStage.addEventListener('touchend', (e) => {
+        if (!currentDoc || e.changedTouches.length !== 1) return;
+        const dx = e.changedTouches[0].clientX - touchStartX;
+        const dy = e.changedTouches[0].clientY - touchStartY;
+        if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+          if (dx < 0 && currentPage < currentDoc.totalPages) {
+            goToPage(currentPage + 1);
+          } else if (dx > 0 && currentPage > 1) {
+            goToPage(currentPage - 1);
+          }
+        }
+      }, { passive: true });
+
+      // Zoom + y Zoom -
+      document.getElementById('zoom-in-btn').addEventListener('click', () => {
+        if (currentZoom < 180) {
+          currentZoom += 15;
+          renderCurrentPage();
+          showToast(`Zoom: ${currentZoom}%`);
+        }
+      });
+
+      document.getElementById('zoom-out-btn').addEventListener('click', () => {
+        if (currentZoom > 70) {
+          currentZoom -= 15;
+          renderCurrentPage();
+          showToast(`Zoom: ${currentZoom}%`);
+        }
+      });
+
+      // Modo Noche / Modo Claro
+      document.getElementById('night-mode-btn').addEventListener('click', () => {
+        isNightMode = !isNightMode;
+        syncNightModeUI();
+      });
+
+      // Marcador
+      function saveBookmarkAction() {
+        if (!currentDoc) return;
+        currentDoc.savedPage = currentPage;
+        saveState();
+        showToast(`Marcador guardado en la página ${currentPage}`);
+      }
+      document.getElementById('reader-bookmark-top').addEventListener('click', saveBookmarkAction);
+      document.getElementById('bookmark-chip-btn').addEventListener('click', saveBookmarkAction);
+
+      // Compartir
+      async function shareCurrentDoc() {
+        if (!currentDoc) return;
+        const shareData = {
+          title: currentDoc.name,
+          text: `Leyendo "${currentDoc.name}" (Página ${currentPage} de ${currentDoc.totalPages}) en LECTOR PDF.`,
+          url: window.location.href
+        };
+        if (navigator.share) {
+          try {
+            await navigator.share(shareData);
+          } catch (e) {}
+        } else if (navigator.clipboard) {
+          await navigator.clipboard.writeText(`${shareData.text} ${shareData.url}`);
+          showToast('Enlace y detalles copiados al portapapeles');
+        } else {
+          showToast(`Compartiendo: ${currentDoc.name}`);
+        }
+      }
+      document.getElementById('share-chip-btn').addEventListener('click', shareCurrentDoc);
+
+      // Buscar palabra dentro del PDF
+      const readerSearchBar = document.getElementById('reader-search-bar');
+      const readerSearchInput = document.getElementById('reader-search-input');
+
+      document.getElementById('reader-search-toggle').addEventListener('click', () => {
+        readerSearchBar.classList.toggle('open');
+        if (readerSearchBar.classList.contains('open')) {
+          readerSearchInput.focus();
+        } else {
+          currentSearchQuery = '';
+          readerSearchInput.value = '';
+          renderCurrentPage();
+        }
+      });
+
+      document.getElementById('reader-search-close').addEventListener('click', () => {
+        readerSearchBar.classList.remove('open');
+        currentSearchQuery = '';
+        readerSearchInput.value = '';
+        renderCurrentPage();
+      });
+
+      readerSearchInput.addEventListener('input', () => {
+        currentSearchQuery = readerSearchInput.value.trim();
+        renderCurrentPage();
+      });
+
+      // Menú de 3 puntitos
+      const moreMenu = document.getElementById('reader-more-menu');
+      document.getElementById('reader-more-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        moreMenu.classList.toggle('open');
+      });
+
+      document.addEventListener('click', (e) => {
+        if (!moreMenu.contains(e.target)) {
+          moreMenu.classList.remove('open');
+        }
+      });
+
+      document.getElementById('menu-first-page').addEventListener('click', () => {
+        moreMenu.classList.remove('open');
+        goToPage(1);
+      });
+
+      document.getElementById('menu-last-page').addEventListener('click', () => {
+        moreMenu.classList.remove('open');
+        if (currentDoc) goToPage(currentDoc.totalPages);
+      });
+
+      document.getElementById('menu-toggle-night').addEventListener('click', () => {
+        moreMenu.classList.remove('open');
+        isNightMode = !isNightMode;
+        syncNightModeUI();
+      });
+
+      document.getElementById('menu-share-doc').addEventListener('click', () => {
+        moreMenu.classList.remove('open');
+        shareCurrentDoc();
+      });
+    });
+  </script>
+</body>
+</html>
