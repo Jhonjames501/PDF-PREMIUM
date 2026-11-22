@@ -1507,6 +1507,8 @@
     }
 
     const STORAGE_KEY = 'lector_pdf_zafiro_state_v1';
+    const PDF_DB_NAME = 'lector_pdf_zafiro_binaries_v2';
+    const PDF_STORE_NAME = 'pdf_files';
 
     // Documentos iniciales requeridos con contenido real por páginas
     const DEFAULT_DOCS = [
@@ -1598,9 +1600,10 @@
       defaultNightMode: false
     };
 
-    // Mapas en memoria para archivos PDF reales subidos durante la sesión
+    // Caché en memoria durante la sesión para instancias ya cargadas de PDF.js y buffers crudos
     const uploadedPdfInstances = new Map();
     const uploadedPdfTexts = new Map();
+    const sessionRawBuffers = new Map();
 
     // Estado activo del lector
     let currentDoc = null;
@@ -1610,6 +1613,321 @@
     let currentSearchQuery = '';
     let activeTab = 'inicio';
 
+    // ================= HASH DE CONTENIDO PARA IDENTIFICACIÓN ÚNICA =================
+    async function computeContentHash(arrayBuffer) {
+      const bytes = new Uint8Array(arrayBuffer);
+      const byteLength = bytes.length;
+
+      // Huella rápida de contenido basada en bytes distribuidos + tamaño exacto
+      // (funciona en cualquier contexto HTTP/HTTPS y en archivos grandes sin bloqueos)
+      let h1 = 0x811c9dc5 ^ byteLength;
+      let h2 = 0x01000193 ^ (byteLength >>> 1);
+
+      const step = Math.max(1, Math.floor(byteLength / 4096));
+      for (let i = 0; i < byteLength; i += step) {
+        const b = bytes[i];
+        h1 ^= b;
+        h1 = Math.imul(h1, 0x01000193);
+        h2 ^= (b + ((i >> 4) & 0xff));
+        h2 = Math.imul(h2, 0x85ebca6b);
+      }
+
+      // Incluir siempre los primeros y últimos bytes del archivo para mayor precisión
+      const edgeLimit = Math.min(256, byteLength);
+      for (let i = 0; i < edgeLimit; i++) {
+        h1 ^= bytes[i];
+        h1 = Math.imul(h1, 0x01000193);
+        h2 ^= bytes[byteLength - 1 - i];
+        h2 = Math.imul(h2, 0x85ebca6b);
+      }
+
+      // Si Web Crypto API (SHA-256) está disponible, combinarla para máxima unicidad
+      if (window.crypto && window.crypto.subtle) {
+        try {
+          const digest = await window.crypto.subtle.digest('SHA-256', arrayBuffer);
+          const digestBytes = new Uint8Array(digest);
+          let shaHex = '';
+          for (let i = 0; i < digestBytes.length; i++) {
+            shaHex += digestBytes[i].toString(16).padStart(2, '0');
+          }
+          return `sha256_${shaHex}_${byteLength}`;
+        } catch (e) {
+          // Continuar con huella de contenido determinista
+        }
+      }
+
+      return `cnt_${(h1 >>> 0).toString(16)}_${(h2 >>> 0).toString(16)}_${byteLength}`;
+    }
+
+    // ================= PERSISTENCIA REAL EN INDEXEDDB =================
+    function openPdfDb() {
+      return new Promise((resolve, reject) => {
+        if (!window.indexedDB) {
+          reject(new Error('IndexedDB no disponible en este navegador'));
+          return;
+        }
+        const req = indexedDB.open(PDF_DB_NAME, 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(PDF_STORE_NAME)) {
+            const store = db.createObjectStore(PDF_STORE_NAME, { keyPath: 'id' });
+            store.createIndex('contentHash', 'contentHash', { unique: false });
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function savePdfToIndexedDB(record) {
+      const db = await openPdfDb();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(PDF_STORE_NAME, 'readwrite');
+        tx.objectStore(PDF_STORE_NAME).put(record);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    async function getPdfRecordFromIndexedDB(id) {
+      const db = await openPdfDb();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(PDF_STORE_NAME, 'readonly');
+        const req = tx.objectStore(PDF_STORE_NAME).get(id);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function findPdfByContentHashInDB(contentHash) {
+      if (!contentHash) return null;
+      const db = await openPdfDb();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(PDF_STORE_NAME, 'readonly');
+        const store = tx.objectStore(PDF_STORE_NAME);
+        if (store.indexNames.contains('contentHash')) {
+          const req = store.index('contentHash').get(contentHash);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => reject(req.error);
+        } else {
+          const req = store.getAll();
+          req.onsuccess = () => {
+            const found = (req.result || []).find(item => item.contentHash === contentHash) || null;
+            resolve(found);
+          };
+          req.onerror = () => reject(req.error);
+        }
+      });
+    }
+
+    async function getAllPdfRecordsFromIndexedDB() {
+      try {
+        const db = await openPdfDb();
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction(PDF_STORE_NAME, 'readonly');
+          const req = tx.objectStore(PDF_STORE_NAME).getAll();
+          req.onsuccess = () => resolve(req.result || []);
+          req.onerror = () => reject(req.error);
+        });
+      } catch (e) {
+        return [];
+      }
+    }
+
+    async function deletePdfRecordFromIndexedDB(id) {
+      try {
+        const db = await openPdfDb();
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction(PDF_STORE_NAME, 'readwrite');
+          tx.objectStore(PDF_STORE_NAME).delete(id);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+      } catch (e) {
+        console.warn('No se pudo eliminar registro duplicado de IndexedDB:', e);
+      }
+    }
+
+    async function getPdfInstance(doc) {
+      if (uploadedPdfInstances.has(doc.id)) {
+        return uploadedPdfInstances.get(doc.id);
+      }
+      if (!window.pdfjsLib) return null;
+
+      let buffer = sessionRawBuffers.get(doc.id) || null;
+      if (!buffer) {
+        const record = await getPdfRecordFromIndexedDB(doc.id);
+        if (record && record.buffer) {
+          buffer = record.buffer;
+          if (record.contentHash && !doc.contentHash) {
+            doc.contentHash = record.contentHash;
+          }
+          sessionRawBuffers.set(doc.id, buffer);
+        }
+      }
+
+      if (!buffer) return null;
+
+      // Clonar ArrayBuffer para que PDF.js no detache el buffer original almacenado
+      const safeBuffer = buffer.slice(0);
+      const pdfDoc = await pdfjsLib.getDocument({ data: safeBuffer }).promise;
+      uploadedPdfInstances.set(doc.id, pdfDoc);
+      return pdfDoc;
+    }
+
+    // ================= DETECCIÓN Y LIMPIEZA DE DUPLICADOS POR CONTENIDO =================
+    function getDocumentIdentityKey(doc) {
+      if (doc && doc.contentHash) {
+        return `hash:${doc.contentHash}`;
+      }
+      const normName = String((doc && doc.name) || '').trim().toLowerCase();
+      const normSize = String((doc && doc.size) || '').trim().toLowerCase();
+      return `meta:${normName}|${normSize}`;
+    }
+
+    function mergeDocProgressAndBookmark(target, source) {
+      const targetProgress = Number(target.progress) || 0;
+      const sourceProgress = Number(source.progress) || 0;
+      const targetPage = Number(target.savedPage) || 1;
+      const sourcePage = Number(source.savedPage) || 1;
+
+      if (sourceProgress > targetProgress) {
+        target.progress = sourceProgress;
+        target.savedPage = sourcePage;
+      } else if (sourceProgress === targetProgress && sourcePage > targetPage) {
+        target.savedPage = sourcePage;
+      }
+
+      if (!target.contentHash && source.contentHash) {
+        target.contentHash = source.contentHash;
+      }
+      if (source.totalPages && (!target.totalPages || source.totalPages > target.totalPages)) {
+        target.totalPages = source.totalPages;
+      }
+      if (source.section === 'recents') {
+        target.section = 'recents';
+      }
+    }
+
+    async function deduplicateDocumentsAndCleanup(docsList, protectIdsSet = new Set()) {
+      if (!Array.isArray(docsList)) return [];
+
+      // Enriquecer con contentHash desde IndexedDB si existe
+      for (const doc of docsList) {
+        if (doc && doc.isUploaded && !doc.contentHash) {
+          const rec = await getPdfRecordFromIndexedDB(doc.id);
+          if (rec && rec.contentHash) {
+            doc.contentHash = rec.contentHash;
+          }
+        }
+      }
+
+      const uniqueMap = new Map();
+      const cleanedList = [];
+      const duplicateIdsToRemove = [];
+
+      for (const doc of docsList) {
+        if (!doc || !doc.name) continue;
+        const key = getDocumentIdentityKey(doc);
+
+        if (!uniqueMap.has(key)) {
+          uniqueMap.set(key, doc);
+          cleanedList.push(doc);
+        } else {
+          const canonicalDoc = uniqueMap.get(key);
+          mergeDocProgressAndBookmark(canonicalDoc, doc);
+
+          // Si el duplicado tiene un ID distinto al canónico y no está protegido, marcar para limpieza
+          if (doc.id && doc.id !== canonicalDoc.id && !protectIdsSet.has(doc.id)) {
+            duplicateIdsToRemove.push(doc.id);
+          }
+        }
+      }
+
+      // Limpiar también registros huérfanos/duplicados en IndexedDB sin tocar el registro canónico
+      const allDbRecords = await getAllPdfRecordsFromIndexedDB();
+      const canonicalIds = new Set(cleanedList.map(d => d.id));
+      const canonicalHashes = new Set(cleanedList.map(d => d.contentHash).filter(Boolean));
+
+      for (const rec of allDbRecords) {
+        const isCanonicalById = canonicalIds.has(rec.id);
+        const isDuplicateByHash = rec.contentHash && canonicalHashes.has(rec.contentHash) && !isCanonicalById;
+        if (isDuplicateByHash && !protectIdsSet.has(rec.id)) {
+          duplicateIdsToRemove.push(rec.id);
+        }
+      }
+
+      const uniqueDuplicateIds = Array.from(new Set(duplicateIdsToRemove));
+      for (const dupId of uniqueDuplicateIds) {
+        uploadedPdfInstances.delete(dupId);
+        uploadedPdfTexts.delete(dupId);
+        sessionRawBuffers.delete(dupId);
+        await deletePdfRecordFromIndexedDB(dupId);
+      }
+
+      return cleanedList;
+    }
+
+    // ================= RECUPERACIÓN AUTOMÁTICA DE PDFs DESDE INDEXEDDB =================
+    async function recoverPersistedPdfsFromIndexedDB() {
+      try {
+        const dbRecords = await getAllPdfRecordsFromIndexedDB();
+        if (!dbRecords || dbRecords.length === 0) return;
+
+        let changed = false;
+        for (const rec of dbRecords) {
+          if (!rec || !rec.id || !rec.buffer) continue;
+
+          const hash = rec.contentHash || await computeContentHash(rec.buffer);
+          if (!rec.contentHash) {
+            rec.contentHash = hash;
+          }
+          sessionRawBuffers.set(rec.id, rec.buffer);
+
+          const existingById = appState.docs.find(d => d.id === rec.id);
+          const existingByHash = appState.docs.find(d => d.contentHash && d.contentHash === hash);
+
+          if (!existingById && !existingByHash) {
+            const name = rec.name || 'Documento_Guardado.pdf';
+            const bytesLen = rec.buffer.byteLength || 0;
+            const sizeKB = bytesLen / 1024;
+            const sizeLabel = rec.size || (sizeKB >= 1024
+              ? `${(sizeKB / 1024).toFixed(1)} MB`
+              : `${Math.max(1, Math.round(sizeKB))} KB`);
+            const cleanTitle = name.replace(/\.pdf$/i, '').slice(0, 14).toUpperCase();
+
+            appState.docs.unshift({
+              id: rec.id,
+              section: rec.section || 'library',
+              coverTitle: rec.coverTitle || cleanTitle || 'PDF',
+              name: name,
+              size: sizeLabel,
+              totalPages: rec.totalPages || 1,
+              progress: typeof rec.progress === 'number' ? rec.progress : 0,
+              savedPage: rec.savedPage || 1,
+              topic: rec.topic || 'Documento PDF importado desde el dispositivo',
+              highlights: rec.highlights || [],
+              isUploaded: true,
+              contentHash: hash
+            });
+            changed = true;
+          } else if (existingById && !existingById.contentHash) {
+            existingById.contentHash = hash;
+            existingById.isUploaded = true;
+            changed = true;
+          }
+        }
+
+        appState.docs = await deduplicateDocumentsAndCleanup(appState.docs);
+        if (changed) {
+          saveState();
+          renderHomeLists();
+        }
+      } catch (e) {
+        console.warn('Error recuperando PDFs desde IndexedDB:', e);
+      }
+    }
+
     // Cargar estado persistente
     function loadState() {
       try {
@@ -1617,7 +1935,10 @@
         if (raw) {
           const parsed = JSON.parse(raw);
           if (parsed && Array.isArray(parsed.docs) && parsed.docs.length > 0) {
-            appState = parsed;
+            appState = {
+              docs: parsed.docs,
+              defaultNightMode: !!parsed.defaultNightMode
+            };
             return;
           }
         }
@@ -1633,7 +1954,6 @@
 
     function saveState() {
       try {
-        // Solo guardamos metadatos serializables (no objetos binarios pesados)
         const serializableDocs = appState.docs.map(d => ({
           id: d.id,
           section: d.section,
@@ -1645,7 +1965,8 @@
           savedPage: d.savedPage,
           topic: d.topic,
           highlights: d.highlights,
-          isUploaded: !!d.isUploaded
+          isUploaded: !!d.isUploaded,
+          contentHash: d.contentHash || null
         }));
         localStorage.setItem(STORAGE_KEY, JSON.stringify({
           docs: serializableDocs,
@@ -1663,7 +1984,7 @@
       toast.textContent = msg;
       toast.classList.add('show');
       clearTimeout(toastTimer);
-      toastTimer = setTimeout(() => toast.classList.remove('show'), 2300);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 2400);
     }
 
     // ================= PANTALLA 1: CARGA 0% -> 100% =================
@@ -1783,14 +2104,28 @@
     }
 
     // ================= ABRIR PDF Y PREGUNTAR MARCADOR =================
-    function handleDocumentClick(docId) {
+    async function handleDocumentClick(docId) {
       const doc = appState.docs.find(d => d.id === docId);
       if (!doc) return;
 
-      // Si es un PDF subido en otra sesión pasada sin binario en memoria
-      if (doc.isUploaded && !uploadedPdfInstances.has(doc.id)) {
-        showToast('Vuelve a seleccionar este PDF con el botón + para abrir su archivo local');
-        return;
+      if (doc.isUploaded) {
+        showToast('Abriendo PDF guardado...');
+        try {
+          const pdfDoc = await getPdfInstance(doc);
+          if (!pdfDoc) {
+            showToast('No se encontró el archivo en este dispositivo. Agrégalo con +');
+            return;
+          }
+          if (pdfDoc.numPages && pdfDoc.numPages !== doc.totalPages) {
+            doc.totalPages = pdfDoc.numPages;
+            saveState();
+            renderHomeLists();
+          }
+        } catch (err) {
+          console.error(err);
+          showToast('No se pudo abrir el archivo PDF guardado');
+          return;
+        }
       }
 
       if (doc.savedPage && doc.savedPage > 1 && doc.savedPage <= doc.totalPages) {
@@ -1848,6 +2183,21 @@
       currentDoc.progress = calculatedPct;
       currentDoc.savedPage = currentPage;
       saveState();
+
+      // Sincronizar también progreso y última página en IndexedDB si es un PDF subido
+      if (currentDoc.isUploaded) {
+        (async () => {
+          try {
+            const existingRec = await getPdfRecordFromIndexedDB(currentDoc.id);
+            if (existingRec && existingRec.buffer) {
+              existingRec.progress = currentDoc.progress;
+              existingRec.savedPage = currentDoc.savedPage;
+              existingRec.totalPages = currentDoc.totalPages;
+              await savePdfToIndexedDB(existingRec);
+            }
+          } catch (e) {}
+        })();
+      }
 
       document.getElementById('page-indicator-text').textContent = `Página ${currentPage} de ${currentDoc.totalPages}`;
       document.getElementById('paper-page-badge').textContent = `PÁG. ${currentPage} / ${currentDoc.totalPages}`;
@@ -1935,12 +2285,17 @@
       // Aplicar zoom real al tamaño de fuente
       paperBody.style.fontSize = `${(16 * currentZoom) / 100}px`;
 
-      // Si es un PDF real cargado desde el dispositivo
-      if (currentDoc.isUploaded && uploadedPdfInstances.has(currentDoc.id)) {
-        const pdfDoc = uploadedPdfInstances.get(currentDoc.id);
+      // Si es un PDF real cargado desde el dispositivo (leído desde IndexedDB / caché)
+      if (currentDoc.isUploaded) {
         paperBody.innerHTML = '<p style="text-align:center;padding:24px;color:#5C6B82;">Renderizando página...</p>';
 
         try {
+          const pdfDoc = await getPdfInstance(currentDoc);
+          if (!pdfDoc) {
+            paperBody.innerHTML = '<p style="text-align:center;padding:24px;">No se encontró el archivo PDF guardado en IndexedDB.</p>';
+            return;
+          }
+
           const page = await pdfDoc.getPage(currentPage);
           const scale = (currentZoom / 100) * 1.35;
           const viewport = page.getViewport({ scale });
@@ -1959,6 +2314,8 @@
           // Extraer texto de la página para permitir búsqueda con resaltado amarillo
           const textContent = await page.getTextContent();
           const pageText = textContent.items.map(item => item.str).join(' ');
+          uploadedPdfTexts.set(`${currentDoc.id}_${currentPage}`, pageText);
+
           if (currentSearchQuery && pageText.trim().length > 0) {
             const highlighted = applyYellowHighlight(`<p>${escapeHtml(pageText)}</p>`, currentSearchQuery);
             matchBadge.textContent = `${highlighted.count} coincidencias`;
@@ -1975,6 +2332,7 @@
           paperBody.innerHTML = '';
           paperBody.appendChild(wrap);
         } catch (err) {
+          console.error(err);
           paperBody.innerHTML = `<p>No se pudo renderizar esta página del archivo PDF.</p>`;
         }
         return;
@@ -2013,7 +2371,7 @@
       }
     }
 
-    // ================= SUBIR PDF REAL CON EL BOTÓN + =================
+    // ================= SUBIR PDF REAL CON EL BOTÓN + (HASH DE CONTENIDO + INDEXEDDB) =================
     async function handleFileSelected(event) {
       const file = event.target.files[0];
       if (!file) return;
@@ -2024,22 +2382,86 @@
         return;
       }
 
-      showToast('Cargando PDF...');
+      showToast('Verificando y guardando PDF...');
 
       try {
         const arrayBuffer = await file.arrayBuffer();
-        let totalPages = 1;
-        let pdfInstance = null;
-
-        if (window.pdfjsLib) {
-          pdfInstance = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-          totalPages = pdfInstance.numPages || 1;
-        }
+        const contentHash = await computeContentHash(arrayBuffer);
 
         const sizeKB = file.size / 1024;
         const sizeLabel = sizeKB >= 1024
           ? `${(sizeKB / 1024).toFixed(1)} MB`
           : `${Math.max(1, Math.round(sizeKB))} KB`;
+
+        // Comprobar si ya existe en la lista o en IndexedDB por contenido del archivo
+        const existingDocByHash = appState.docs.find(d => d.contentHash && d.contentHash === contentHash);
+        const existingDbRecord = await findPdfByContentHashInDB(contentHash);
+
+        if (existingDocByHash) {
+          if (!sessionRawBuffers.has(existingDocByHash.id)) {
+            sessionRawBuffers.set(existingDocByHash.id, arrayBuffer);
+          }
+          if (!existingDbRecord) {
+            await savePdfToIndexedDB({
+              id: existingDocByHash.id,
+              contentHash: contentHash,
+              name: existingDocByHash.name,
+              size: existingDocByHash.size,
+              totalPages: existingDocByHash.totalPages,
+              progress: existingDocByHash.progress,
+              savedPage: existingDocByHash.savedPage,
+              section: existingDocByHash.section,
+              coverTitle: existingDocByHash.coverTitle,
+              buffer: arrayBuffer.slice(0)
+            });
+          }
+          showToast(`"${existingDocByHash.name}" ya está guardado (sin duplicar)`);
+          event.target.value = '';
+          return;
+        }
+
+        if (existingDbRecord) {
+          let totalPages = existingDbRecord.totalPages || 1;
+          let pdfInstance = null;
+          if (window.pdfjsLib) {
+            pdfInstance = await pdfjsLib.getDocument({ data: existingDbRecord.buffer.slice(0) }).promise;
+            totalPages = pdfInstance.numPages || totalPages;
+            uploadedPdfInstances.set(existingDbRecord.id, pdfInstance);
+          }
+          sessionRawBuffers.set(existingDbRecord.id, existingDbRecord.buffer);
+
+          const cleanTitle = (existingDbRecord.name || file.name).replace(/\.pdf$/i, '').slice(0, 14).toUpperCase();
+          const recoveredDoc = {
+            id: existingDbRecord.id,
+            section: existingDbRecord.section || 'library',
+            coverTitle: existingDbRecord.coverTitle || cleanTitle || 'PDF',
+            name: existingDbRecord.name || file.name,
+            size: existingDbRecord.size || sizeLabel,
+            totalPages: totalPages,
+            progress: typeof existingDbRecord.progress === 'number' ? existingDbRecord.progress : 0,
+            savedPage: existingDbRecord.savedPage || 1,
+            topic: 'Documento PDF importado desde el dispositivo',
+            highlights: [],
+            isUploaded: true,
+            contentHash: contentHash
+          };
+
+          appState.docs.unshift(recoveredDoc);
+          appState.docs = await deduplicateDocumentsAndCleanup(appState.docs);
+          saveState();
+          renderHomeLists();
+          showToast(`"${recoveredDoc.name}" recuperado desde el dispositivo`);
+          event.target.value = '';
+          return;
+        }
+
+        let totalPages = 1;
+        let pdfInstance = null;
+
+        if (window.pdfjsLib) {
+          pdfInstance = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
+          totalPages = pdfInstance.numPages || 1;
+        }
 
         const cleanTitle = file.name.replace(/\.pdf$/i, '').slice(0, 14).toUpperCase();
         const newId = 'doc-user-' + Date.now();
@@ -2055,29 +2477,48 @@
           savedPage: 1,
           topic: 'Documento PDF importado desde el dispositivo',
           highlights: [],
-          isUploaded: true
+          isUploaded: true,
+          contentHash: contentHash
         };
 
+        await savePdfToIndexedDB({
+          id: newId,
+          contentHash: contentHash,
+          name: file.name,
+          size: sizeLabel,
+          totalPages: totalPages,
+          progress: 0,
+          savedPage: 1,
+          section: 'library',
+          coverTitle: cleanTitle || 'PDF',
+          buffer: arrayBuffer.slice(0)
+        });
+
+        sessionRawBuffers.set(newId, arrayBuffer);
         if (pdfInstance) {
           uploadedPdfInstances.set(newId, pdfInstance);
         }
 
         appState.docs.unshift(newDoc);
+        appState.docs = await deduplicateDocumentsAndCleanup(appState.docs);
         saveState();
         renderHomeLists();
-        showToast(`"${file.name}" agregado a Mi Biblioteca`);
+        showToast(`"${file.name}" guardado permanentemente`);
       } catch (err) {
         console.error(err);
-        showToast('Error al leer el archivo PDF seleccionado');
+        showToast('Error al guardar el archivo PDF seleccionado');
       } finally {
         event.target.value = '';
       }
     }
 
     // ================= INICIALIZACIÓN DE EVENTOS =================
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', async () => {
       loadState();
+      appState.docs = await deduplicateDocumentsAndCleanup(appState.docs);
+      saveState();
       renderHomeLists();
+      await recoverPersistedPdfsFromIndexedDB();
       runSplashSequence();
 
       // Buscador en Pantalla 2
@@ -2135,12 +2576,35 @@
         showToast(`Modo Noche predeterminado: ${defaultNightBtn.textContent}`);
       });
 
-      document.getElementById('reset-progress-btn').addEventListener('click', () => {
-        appState.docs = JSON.parse(JSON.stringify(DEFAULT_DOCS));
-        uploadedPdfInstances.clear();
+      document.getElementById('reset-progress-btn').addEventListener('click', async () => {
+        const preservedUploadedIds = new Set(
+          appState.docs.filter(d => d.isUploaded).map(d => d.id)
+        );
+
+        const userDocs = appState.docs
+          .filter(d => d.isUploaded)
+          .map(d => ({
+            ...d,
+            progress: 0,
+            savedPage: 1
+          }));
+
+        const merged = [...userDocs, ...JSON.parse(JSON.stringify(DEFAULT_DOCS))];
+        appState.docs = await deduplicateDocumentsAndCleanup(merged, preservedUploadedIds);
+
+        // Actualizar progreso y marcador reiniciados en IndexedDB sin borrar los archivos PDF
+        for (const uDoc of appState.docs.filter(d => d.isUploaded)) {
+          const rec = await getPdfRecordFromIndexedDB(uDoc.id);
+          if (rec && rec.buffer) {
+            rec.progress = 0;
+            rec.savedPage = 1;
+            await savePdfToIndexedDB(rec);
+          }
+        }
+
         saveState();
         renderHomeLists();
-        showToast('Progreso y documentos restaurados');
+        showToast('Progreso reiniciado (tus PDFs guardados se conservan)');
       });
 
       // Controles de Pantalla 3 (Lector)
